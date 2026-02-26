@@ -1,1 +1,971 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PlanTrack</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0f1117;--s:#181c27;--s2:#1f2438;--bd:#2a3050;--ac:#4f7bff;--ac2:#00d4aa;--ac3:#ff6b6b;--ac4:#ffd166;--tx:#e8ecf4;--mu:#6b7594;--mu2:#4a5068;--gr:#22c55e;--or:#f97316;--re:#ef4444;--mono:'DM Mono',monospace;--sans:'Sora',sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--sans);background:var(--bg);color:var(--tx);min-height:100vh}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bd);border-radius:3px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- ⚠️ CONFIGURARE: Înlocuiește cu datele tale din Supabase -->
+<script>
+window.SUPABASE_URL = 'https://skizejuuioeqxrtnunjt.supabase.co';
+window.SUPABASE_ANON_KEY = 'sb_publishable_wGLxRsNejeQiJDuI6kphZw_TbYh3Spy';
+</script>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useMemo } = React;
+const supabase = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+// ─── CONSTANTE ───────────────────────────────────────────────
+const MONTHS = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
+const MONTHS_SHORT = ['IAN','FEB','MAR','APR','MAI','IUN','IUL','AUG','SEP','OCT','NOV','DEC'];
+const DAY_NAMES = ['DUM','LUN','MAR','MIE','JOI','VIN','SAM'];
+const TIP_PLAN = ['NOU','C_DE','C_LMT','NTR','MKT','MKT_45','-'];
+const SCH_BEW = ['SCH','BEW','GENERALITATI'];
+const ETAJE = ['KG','EG','1.OG','2.OG','3.OG','4.OG','5.OG','6.OG','7.OG','8.OG','9.OG','SG','BO'];
+const STATUSURI = ['In lucru','Pauza','Terminat','-'];
+
+// ─── STYLES ──────────────────────────────────────────────────
+const css = {
+  // Layout
+  sidebar: {width:220,minHeight:'100vh',background:'var(--s)',borderRight:'1px solid var(--bd)',display:'flex',flexDirection:'column',position:'fixed',left:0,top:0,bottom:0,zIndex:100},
+  main: {marginLeft:220,minHeight:'100vh',display:'flex',flexDirection:'column'},
+  topbar: {height:60,background:'var(--s)',borderBottom:'1px solid var(--bd)',display:'flex',alignItems:'center',padding:'0 28px',gap:16,position:'sticky',top:0,zIndex:50},
+  content: {padding:'24px 28px',flex:1},
+  // Components
+  btn: (variant='primary',extra={})=>({padding:'7px 16px',borderRadius:8,fontSize:12,fontWeight:600,cursor:'pointer',border:'none',fontFamily:'var(--sans)',display:'inline-flex',alignItems:'center',gap:6,transition:'all .15s',
+    background:variant==='primary'?'var(--ac)':variant==='green'?'var(--gr)':variant==='red'?'var(--re)':'transparent',
+    color:variant==='ghost'?'var(--mu)':'white',
+    ...(variant==='ghost'?{border:'1px solid var(--bd)'}:{}), ...extra}),
+  input: {background:'var(--s2)',border:'1px solid var(--bd)',color:'var(--tx)',borderRadius:6,padding:'7px 10px',fontSize:12,fontFamily:'var(--sans)',outline:'none',width:'100%'},
+  card: (extra={})=>({background:'var(--s)',border:'1px solid var(--bd)',borderRadius:14,...extra}),
+  badge: (type)=>({padding:'3px 8px',borderRadius:5,fontSize:10,fontWeight:600,fontFamily:'var(--mono)',
+    background: type==='Terminat'?'rgba(34,197,94,.15)':type==='In lucru'?'rgba(79,123,255,.15)':type==='Pauza'?'rgba(249,115,22,.15)':'var(--s2)',
+    color: type==='Terminat'?'var(--gr)':type==='In lucru'?'var(--ac)':type==='Pauza'?'var(--or)':'var(--mu2)'}),
+  tipBadge: (tip)=>{
+    const map={NOU:['rgba(0,212,170,.15)','var(--ac2)'],C_DE:['rgba(255,209,102,.15)','var(--ac4)'],C_LMT:['rgba(79,123,255,.15)','var(--ac)'],NTR:['rgba(249,115,22,.15)','var(--or)'],MKT:['rgba(239,68,68,.15)','var(--re)'],MKT_45:['rgba(239,68,68,.1)','#f87']};
+    const [bg,col]=map[tip]||['var(--s2)','var(--mu)'];
+    return {padding:'2px 7px',borderRadius:4,fontSize:10,fontWeight:700,fontFamily:'var(--mono)',background:bg,color:col};
+  }
+};
+
+// ─── TOAST ───────────────────────────────────────────────────
+function Toast({msg,type='success',onClose}){
+  useEffect(()=>{const t=setTimeout(onClose,3000);return()=>clearTimeout(t)},[]);
+  return <div style={{position:'fixed',bottom:24,right:24,background:'var(--s2)',border:`1px solid ${type==='success'?'var(--gr)':'var(--re)'}`,borderRadius:10,padding:'12px 18px',fontSize:13,color:type==='success'?'var(--gr)':'var(--re)',zIndex:2000,boxShadow:'0 8px 32px rgba(0,0,0,.4)',animation:'slideUp .3s ease'}}>
+    {msg}
+  </div>;
+}
+
+// ─── MODAL ───────────────────────────────────────────────────
+function Modal({title,onClose,children,width=480}){
+  return <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,backdropFilter:'blur(4px)'}}>
+    <div style={{background:'var(--s)',border:'1px solid var(--bd)',borderRadius:16,padding:28,width,maxWidth:'95vw',boxShadow:'0 24px 80px rgba(0,0,0,.5)',animation:'slideUp .2s ease'}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+        <span style={{fontSize:16,fontWeight:700}}>{title}</span>
+        <span onClick={onClose} style={{cursor:'pointer',color:'var(--mu)',fontSize:18}}>✕</span>
+      </div>
+      {children}
+    </div>
+  </div>;
+}
+
+function FormGroup({label,children}){
+  return <div style={{marginBottom:14}}>
+    <div style={{fontSize:11,color:'var(--mu)',fontFamily:'var(--mono)',marginBottom:6,letterSpacing:.5}}>{label}</div>
+    {children}
+  </div>;
+}
+
+// ─── LOGIN PAGE ───────────────────────────────────────────────
+function LoginPage({onLogin}){
+  const [email,setEmail]=useState('');
+  const [pass,setPass]=useState('');
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState('');
+
+  const handleLogin=async(e)=>{
+    e.preventDefault();
+    setLoading(true);setError('');
+    const{data,error:err}=await supabase.auth.signInWithPassword({email,password:pass});
+    if(err){setError(err.message);setLoading(false);return;}
+    const{data:profile}=await supabase.from('profiles').select('*').eq('id',data.user.id).single();
+    onLogin(data.user,profile);
+    setLoading(false);
+  };
+
+  return <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--bg)'}}>
+    <div style={{width:400,padding:40,background:'var(--s)',border:'1px solid var(--bd)',borderRadius:20,boxShadow:'0 24px 80px rgba(0,0,0,.5)'}}>
+      <div style={{marginBottom:32,textAlign:'center'}}>
+        <div style={{fontSize:28,fontWeight:700,color:'var(--ac)',letterSpacing:-1}}>Plan<span style={{color:'var(--ac2)'}}>Track</span></div>
+        <div style={{fontSize:11,color:'var(--mu)',fontFamily:'var(--mono)',marginTop:4,letterSpacing:2}}>TASK MANAGER</div>
+      </div>
+      <form onSubmit={handleLogin}>
+        <FormGroup label="EMAIL">
+          <input style={css.input} type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="vasile@firma.ro" required/>
+        </FormGroup>
+        <FormGroup label="PAROLĂ">
+          <input style={css.input} type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" required/>
+        </FormGroup>
+        {error&&<div style={{color:'var(--re)',fontSize:12,marginBottom:12,fontFamily:'var(--mono)'}}>{error}</div>}
+        <button type="submit" style={{...css.btn('primary'),width:'100%',justifyContent:'center',padding:'10px 16px',marginTop:8}}>
+          {loading?'Se conectează...':'→ Intră în cont'}
+        </button>
+      </form>
+    </div>
+  </div>;
+}
+
+// ─── TASK MODAL ───────────────────────────────────────────────
+function TaskModal({onClose,onSave,projects,bauteile,date,task=null}){
+  const isEdit=!!task;
+  const [form,setForm]=useState(task?{...task,date:task.date}:{
+    date:date||new Date().toISOString().split('T')[0],
+    project_id:'',bauteil_id:'',tip_plan:'NOU',sch_bew_gen:'SCH',
+    etaj:'EG',numar_plan:'',descriere:'',status:'In lucru',
+    ora_inceput:'08:00',ora_pauza:'',ora_terminat:'',observatii:''
+  });
+  const [saving,setSaving]=useState(false);
+
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const filteredBauteile=bauteile.filter(b=>b.project_id===parseInt(form.project_id));
+
+  const calcOre=()=>{
+    const end=form.ora_terminat||form.ora_pauza;
+    if(!end||!form.ora_inceput)return null;
+    const[h1,m1]=form.ora_inceput.split(':').map(Number);
+    const[h2,m2]=end.split(':').map(Number);
+    return ((h2*60+m2)-(h1*60+m1))/60;
+  };
+  const ore=calcOre();
+
+  const handleSave=async()=>{
+    if(!form.project_id||!form.descriere||!form.ora_inceput){alert('Completează câmpurile obligatorii!');return;}
+    setSaving(true);
+    await onSave({...form,project_id:parseInt(form.project_id),bauteil_id:form.bauteil_id?parseInt(form.bauteil_id):null});
+    setSaving(false);onClose();
+  };
+
+  return <Modal title={isEdit?'✏️ Editează Task':'➕ Task Nou'} onClose={onClose} width={520}>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <FormGroup label="DATA">
+        <input style={css.input} type="date" value={form.date} onChange={e=>set('date',e.target.value)}/>
+      </FormGroup>
+      <FormGroup label="PROIECT *">
+        <select style={css.input} value={form.project_id} onChange={e=>{set('project_id',e.target.value);set('bauteil_id','');}}>
+          <option value="">— Selectează —</option>
+          {projects.map(p=><option key={p.id} value={p.id}>{p.abreviere}</option>)}
+        </select>
+      </FormGroup>
+    </div>
+    {filteredBauteile.length>0&&<FormGroup label="BAUTEIL">
+      <select style={css.input} value={form.bauteil_id} onChange={e=>set('bauteil_id',e.target.value)}>
+        <option value="">— Fără bauteil —</option>
+        {filteredBauteile.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+      </select>
+    </FormGroup>}
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+      <FormGroup label="TIP PLAN *">
+        <select style={css.input} value={form.tip_plan} onChange={e=>set('tip_plan',e.target.value)}>
+          {TIP_PLAN.map(t=><option key={t}>{t}</option>)}
+        </select>
+      </FormGroup>
+      <FormGroup label="SCH/BEW/GEN *">
+        <select style={css.input} value={form.sch_bew_gen} onChange={e=>set('sch_bew_gen',e.target.value)}>
+          {SCH_BEW.map(s=><option key={s}>{s}</option>)}
+        </select>
+      </FormGroup>
+      <FormGroup label="ETAJ *">
+        <select style={css.input} value={form.etaj} onChange={e=>set('etaj',e.target.value)}>
+          {ETAJE.map(e=><option key={e}>{e}</option>)}
+        </select>
+      </FormGroup>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <FormGroup label="NUMĂR PLAN">
+        <input style={css.input} value={form.numar_plan} onChange={e=>set('numar_plan',e.target.value)} placeholder="ex. A-101"/>
+      </FormGroup>
+      <FormGroup label="STATUS *">
+        <select style={css.input} value={form.status} onChange={e=>set('status',e.target.value)}>
+          {STATUSURI.map(s=><option key={s}>{s}</option>)}
+        </select>
+      </FormGroup>
+    </div>
+    <FormGroup label="DESCRIERE PLAN *">
+      <input style={css.input} value={form.descriere} onChange={e=>set('descriere',e.target.value)} placeholder="ex. Grundriss + Schnitte"/>
+    </FormGroup>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+      <FormGroup label="ORA ÎNCEPUT *">
+        <input style={css.input} type="time" value={form.ora_inceput} onChange={e=>set('ora_inceput',e.target.value)}/>
+      </FormGroup>
+      <FormGroup label="ORA PAUZĂ">
+        <input style={css.input} type="time" value={form.ora_pauza} onChange={e=>set('ora_pauza',e.target.value)}/>
+      </FormGroup>
+      <FormGroup label="ORA TERMINAT">
+        <input style={css.input} type="time" value={form.ora_terminat} onChange={e=>set('ora_terminat',e.target.value)}/>
+      </FormGroup>
+    </div>
+    {ore!==null&&<div style={{background:'rgba(0,212,170,.08)',border:'1px solid rgba(0,212,170,.2)',borderRadius:8,padding:'8px 14px',fontSize:12,color:'var(--ac2)',fontFamily:'var(--mono)',marginBottom:14}}>
+      ⏱ Ore calculate: <strong>{ore.toFixed(2)}h</strong>
+    </div>}
+    <FormGroup label="OBSERVAȚII">
+      <input style={css.input} value={form.observatii} onChange={e=>set('observatii',e.target.value)} placeholder="opțional"/>
+    </FormGroup>
+    <div style={{display:'flex',justifyContent:'flex-end',gap:10,marginTop:20,paddingTop:16,borderTop:'1px solid var(--bd)'}}>
+      <button style={css.btn('ghost')} onClick={onClose}>Anulează</button>
+      <button style={css.btn('primary')} onClick={handleSave} disabled={saving}>
+        {saving?'Se salvează...':'✓ Salvează'}
+      </button>
+    </div>
+  </Modal>;
+}
+
+// ─── TASKS VIEW ───────────────────────────────────────────────
+function TasksView({user,profile,projects,bauteile,holidays}){
+  const now=new Date();
+  const [month,setMonth]=useState(now.getMonth());
+  const [year,setYear]=useState(now.getFullYear());
+  const [tasks,setTasks]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [modal,setModal]=useState(null); // null | 'add' | {task}
+  const [toast,setToast]=useState(null);
+
+  const holidaySet=useMemo(()=>new Set(holidays.filter(h=>new Date(h.date).getFullYear()===year).map(h=>h.date)),[holidays,year]);
+
+  const fetchTasks=useCallback(async()=>{
+    setLoading(true);
+    const from=`${year}-${String(month+1).padStart(2,'0')}-01`;
+    const to=`${year}-${String(month+1).padStart(2,'0')}-${new Date(year,month+1,0).getDate()}`;
+    const{data}=await supabase.from('tasks').select('*, projects(abreviere,name), bauteile(name)').eq('user_id',user.id).gte('date',from).lte('date',to).order('date').order('ora_inceput');
+    setTasks(data||[]);setLoading(false);
+  },[user.id,month,year]);
+
+  useEffect(()=>{fetchTasks();},[fetchTasks]);
+
+  const handleSave=async(form)=>{
+    const{error}=form.id
+      ?await supabase.from('tasks').update({...form,user_id:user.id}).eq('id',form.id)
+      :await supabase.from('tasks').insert({...form,user_id:user.id});
+    if(error){setToast({msg:'Eroare: '+error.message,type:'error'});}
+    else{setToast({msg:'✓ Task salvat!',type:'success'});fetchTasks();}
+  };
+
+  const handleDelete=async(id)=>{
+    if(!confirm('Ștergi task-ul?'))return;
+    await supabase.from('tasks').delete().eq('id',id);
+    setToast({msg:'Task șters.',type:'success'});fetchTasks();
+  };
+
+  const changeMonth=(dir)=>{
+    let m=month+dir,y=year;
+    if(m<0){m=11;y--;}else if(m>11){m=0;y++;}
+    setMonth(m);setYear(y);
+  };
+
+  // Group tasks by date
+  const tasksByDay=useMemo(()=>{
+    const map={};
+    tasks.forEach(t=>{
+      if(!map[t.date])map[t.date]=[];
+      map[t.date].push(t);
+    });
+    return map;
+  },[tasks]);
+
+  const totalOre=tasks.reduce((s,t)=>s+(parseFloat(t.ore_calculate)||0),0);
+  const zileLucrate=new Set(tasks.map(t=>t.date)).size;
+  const daysInMonth=new Date(year,month+1,0).getDate();
+
+  // Build rows
+  const rows=[];
+  for(let d=1;d<=daysInMonth;d++){
+    const dateStr=`${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dow=new Date(year,month,d).getDay();
+    const isWeekend=dow===0||dow===6;
+    const isHoliday=holidaySet.has(dateStr);
+    const dayTasks=tasksByDay[dateStr]||[];
+    rows.push({d,dateStr,dow,isWeekend,isHoliday,tasks:dayTasks});
+  }
+
+  const col='90px 1fr 80px 60px 110px 80px 70px 70px 70px 60px 72px';
+
+  return <div>
+    {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+    {modal==='add'&&<TaskModal onClose={()=>setModal(null)} onSave={handleSave} projects={projects} bauteile={bauteile}/>}
+    {modal&&modal.id&&<TaskModal task={modal} onClose={()=>setModal(null)} onSave={handleSave} projects={projects} bauteile={bauteile}/>}
+
+    {/* Month nav */}
+    <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20,flexWrap:'wrap'}}>
+      <div onClick={()=>changeMonth(-1)} style={{width:32,height:32,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:8,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>‹</div>
+      <span style={{fontSize:20,fontWeight:700}}>{MONTHS[month]}</span>
+      <span style={{fontSize:14,color:'var(--mu)'}}>{year}</span>
+      <div onClick={()=>changeMonth(1)} style={{width:32,height:32,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:8,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>›</div>
+      <div style={{marginLeft:'auto',display:'flex',gap:12,flexWrap:'wrap'}}>
+        {[['Ore lucrate',totalOre.toFixed(1)+'h','var(--ac2)'],['Zile lucrate',zileLucrate,'var(--ac)'],['Task-uri',tasks.length,'var(--ac4)']].map(([l,v,c])=>
+          <div key={l} style={{background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:8,padding:'6px 14px',fontSize:12,display:'flex',alignItems:'center',gap:8}}>
+            {l}: <strong style={{color:c,fontFamily:'var(--mono)',fontSize:14}}>{v}</strong>
+          </div>
+        )}
+      </div>
+    </div>
+
+    {/* Header row */}
+    <div style={{display:'grid',gridTemplateColumns:col,gap:1,background:'var(--bd)',borderRadius:'12px 12px 0 0',overflow:'hidden',marginBottom:1}}>
+      {['ZI','PROIECT','TIP PLAN','ETAJ','DESCRIERE','STATUS','ÎNCEPUT','PAUZĂ','TERMINAT','ORE',''].map(h=>
+        <div key={h} style={{background:'var(--s2)',padding:'7px 10px',fontSize:10,color:'var(--mu)',fontFamily:'var(--mono)',letterSpacing:.5}}>{h}</div>
+      )}
+    </div>
+
+    {/* Task rows */}
+    <div style={{background:'var(--bd)',borderRadius:'0 0 12px 12px',overflow:'hidden',display:'flex',flexDirection:'column',gap:1}}>
+      {loading?<div style={{background:'var(--s)',padding:40,textAlign:'center',color:'var(--mu)'}}>Se încarcă...</div>:
+      rows.map(({d,dateStr,dow,isWeekend,isHoliday,tasks:dt})=>{
+        if(isWeekend&&dt.length===0)return null;
+        const bg=isHoliday?'rgba(255,107,107,.05)':isWeekend?'rgba(255,255,255,.02)':'var(--s)';
+
+        if(dt.length===0)return(
+          <div key={dateStr} style={{display:'grid',gridTemplateColumns:col,gap:1,background:bg}}>
+            <div style={{padding:'8px 10px',display:'flex',flexDirection:'column',justifyContent:'center',gap:2}}>
+              <span style={{fontSize:16,fontWeight:700,lineHeight:1}}>{String(d).padStart(2,'0')}</span>
+              <span style={{fontSize:10,color:'var(--mu)',fontFamily:'var(--mono)'}}>{DAY_NAMES[dow]}</span>
+              {isHoliday&&<span style={{fontSize:9,color:'var(--re)',fontFamily:'var(--mono)'}}>LIBER</span>}
+            </div>
+            <div style={{padding:'8px 10px',color:'var(--mu2)',fontSize:11,fontFamily:'var(--mono)',display:'flex',alignItems:'center',gridColumn:'2 / -2'}}>
+              {isHoliday?`— ${holidays.find(h=>h.date===dateStr)?.name||'Zi liberă'} —`:isWeekend?'— weekend —':'— fără task-uri —'}
+            </div>
+            <div style={{padding:'6px 8px',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <button onClick={()=>setModal('add')} title="Adaugă task" style={{width:24,height:24,borderRadius:6,background:'transparent',border:'1px dashed var(--bd)',color:'var(--mu2)',cursor:'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>
+            </div>
+          </div>
+        );
+
+        return dt.map((t,i)=>(
+          <div key={t.id} style={{display:'grid',gridTemplateColumns:col,gap:1,background:bg}}>
+            <div style={{padding:'8px 10px',display:'flex',flexDirection:'column',justifyContent:'center',gap:2}}>
+              {i===0&&<><span style={{fontSize:16,fontWeight:700,lineHeight:1}}>{String(d).padStart(2,'0')}</span>
+              <span style={{fontSize:10,color:'var(--mu)',fontFamily:'var(--mono)'}}>{DAY_NAMES[dow]}</span></>}
+            </div>
+            <div style={{padding:'8px 10px',display:'flex',alignItems:'center'}}>
+              <span style={{background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:5,padding:'2px 8px',fontSize:11,fontFamily:'var(--mono)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'100%'}}>
+                {t.projects?.abreviere}{t.bauteile?` / ${t.bauteile.name}`:''}
+              </span>
+            </div>
+            <div style={{padding:'8px 10px',display:'flex',alignItems:'center'}}><span style={css.tipBadge(t.tip_plan)}>{t.tip_plan}</span></div>
+            <div style={{padding:'8px 10px',display:'flex',alignItems:'center',fontSize:11,color:'var(--mu)',fontFamily:'var(--mono)'}}>{t.etaj}</div>
+            <div style={{padding:'8px 10px',display:'flex',alignItems:'center',fontSize:12,color:'var(--mu)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.descriere}</div>
+            <div style={{padding:'8px 10px',display:'flex',alignItems:'center'}}><span style={css.badge(t.status)}>{t.status==='In lucru'?'ÎN LUCRU':t.status.toUpperCase()}</span></div>
+            <div style={{padding:'8px 10px',display:'flex',alignItems:'center',fontSize:12,color:'var(--mu)',fontFamily:'var(--mono)'}}>{t.ora_inceput?.slice(0,5)||'—'}</div>
+            <div style={{padding:'8px 10px',display:'flex',alignItems:'center',fontSize:12,color:'var(--mu)',fontFamily:'var(--mono)'}}>{t.ora_pauza?.slice(0,5)||'—'}</div>
+            <div style={{padding:'8px 10px',display:'flex',alignItems:'center',fontSize:12,color:'var(--mu)',fontFamily:'var(--mono)'}}>{t.ora_terminat?.slice(0,5)||'—'}</div>
+            <div style={{padding:'8px 10px',display:'flex',alignItems:'center',fontSize:13,fontWeight:600,fontFamily:'var(--mono)',color:'var(--ac2)'}}>{t.ore_calculate?parseFloat(t.ore_calculate).toFixed(1)+'h':'—'}</div>
+            <div style={{padding:'6px 8px',display:'flex',alignItems:'center',gap:4}}>
+              <button onClick={()=>setModal(t)} style={{width:26,height:26,borderRadius:6,background:'transparent',border:'1px solid var(--bd)',color:'var(--mu)',cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center'}} title="Editează">✏️</button>
+              <button onClick={()=>handleDelete(t.id)} style={{width:26,height:26,borderRadius:6,background:'transparent',border:'1px solid var(--bd)',color:'var(--mu)',cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center'}} title="Șterge">🗑</button>
+            </div>
+          </div>
+        ));
+      })}
+      {/* Add row */}
+      <div onClick={()=>setModal('add')} style={{display:'flex',alignItems:'center',justifyContent:'center',padding:'10px',background:'rgba(79,123,255,.03)',cursor:'pointer',gap:8,fontSize:12,color:'var(--mu2)',borderTop:'1px dashed var(--bd)'}}>
+        <span style={{color:'var(--ac)'}}>+</span> Adaugă task nou
+      </div>
+    </div>
+  </div>;
+}
+
+// ─── REPORTS VIEW ─────────────────────────────────────────────
+function ReportsView({user,profile,projects}){
+  const [year,setYear]=useState(new Date().getFullYear());
+  const [data,setData]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [view,setView]=useState('projects'); // projects | users | months
+
+  useEffect(()=>{
+    const fetch=async()=>{
+      setLoading(true);
+      // For admin: all tasks; for user: own tasks
+      let q=supabase.from('tasks').select('*, projects(abreviere,name)').gte('date',`${year}-01-01`).lte('date',`${year}-12-31`);
+      if(profile.role!=='admin')q=q.eq('user_id',user.id);
+      const{data:d}=await q;
+      setData(d||[]);setLoading(false);
+    };fetch();
+  },[year,user.id,profile.role]);
+
+  const totalOre=data.reduce((s,t)=>s+(parseFloat(t.ore_calculate)||0),0);
+
+  // Group by project
+  const byProject=useMemo(()=>{
+    const map={};
+    data.forEach(t=>{
+      const k=t.projects?.abreviere||'Necunoscut';
+      map[k]=(map[k]||0)+(parseFloat(t.ore_calculate)||0);
+    });
+    return Object.entries(map).sort((a,b)=>b[1]-a[1]);
+  },[data]);
+
+  // Group by month
+  const byMonth=useMemo(()=>{
+    const arr=Array(12).fill(0);
+    data.forEach(t=>{
+      const m=new Date(t.date).getMonth();
+      arr[m]+=(parseFloat(t.ore_calculate)||0);
+    });
+    return arr;
+  },[data]);
+
+  // Group by tip plan
+  const byTip=useMemo(()=>{
+    const map={};
+    data.forEach(t=>{map[t.tip_plan]=(map[t.tip_plan]||0)+(parseFloat(t.ore_calculate)||0);});
+    return Object.entries(map).sort((a,b)=>b[1]-a[1]);
+  },[data]);
+
+  const maxProject=byProject[0]?.[1]||1;
+  const maxMonth=Math.max(...byMonth)||1;
+  const tipColors={NOU:'var(--ac2)',C_DE:'var(--ac4)',C_LMT:'var(--ac)',NTR:'var(--or)',MKT:'var(--re)',MKT_45:'#f87','-':'var(--mu)'};
+
+  return <div>
+    {/* KPIs */}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+      {[
+        ['ORE TOTAL',totalOre.toFixed(1)+'h','var(--ac)'],
+        ['TASK-URI',data.length,'var(--ac2)'],
+        ['PROIECTE ACTIVE',new Set(data.map(t=>t.project_id)).size,'var(--ac4)'],
+        ['TERMINATE',data.filter(t=>t.status==='Terminat').length,'var(--gr)'],
+      ].map(([l,v,c])=><div key={l} style={{...css.card(),padding:18}}>
+        <div style={{fontSize:11,color:'var(--mu)',fontFamily:'var(--mono)',marginBottom:8}}>{l}</div>
+        <div style={{fontSize:26,fontWeight:700,color:c,fontFamily:'var(--mono)'}}>{v}</div>
+      </div>)}
+    </div>
+
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+      {/* Ore per proiect */}
+      <div style={{...css.card(),padding:20}}>
+        <div style={{fontSize:12,fontWeight:600,color:'var(--mu)',fontFamily:'var(--mono)',letterSpacing:1,marginBottom:16}}>ORE PER PROIECT — {year}</div>
+        {loading?<div style={{color:'var(--mu)',fontSize:12}}>Se încarcă...</div>:
+        byProject.length===0?<div style={{color:'var(--mu)',fontSize:12,textAlign:'center',padding:20}}>Nicio dată disponibilă</div>:
+        <div style={{display:'flex',flexDirection:'column',gap:10}}>
+          {byProject.slice(0,10).map(([name,ore])=><div key={name} style={{display:'flex',alignItems:'center',gap:12}}>
+            <div style={{fontSize:11,fontFamily:'var(--mono)',color:'var(--mu)',width:130,flexShrink:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{name}</div>
+            <div style={{flex:1,height:8,background:'var(--s2)',borderRadius:4,overflow:'hidden'}}>
+              <div style={{height:'100%',width:`${ore/maxProject*100}%`,background:'var(--ac)',borderRadius:4,transition:'width .5s'}}/>
+            </div>
+            <div style={{fontSize:11,fontFamily:'var(--mono)',width:48,textAlign:'right',color:'var(--tx)'}}>{ore.toFixed(1)}h</div>
+          </div>)}
+        </div>}
+      </div>
+
+      {/* Ore per lună */}
+      <div style={{...css.card(),padding:20}}>
+        <div style={{fontSize:12,fontWeight:600,color:'var(--mu)',fontFamily:'var(--mono)',letterSpacing:1,marginBottom:16}}>ORE PER LUNĂ — {year}</div>
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {byMonth.map((ore,i)=><div key={i} style={{display:'flex',alignItems:'center',gap:12}}>
+            <div style={{fontSize:11,fontFamily:'var(--mono)',color:'var(--mu)',width:32,flexShrink:0}}>{MONTHS_SHORT[i]}</div>
+            <div style={{flex:1,height:8,background:'var(--s2)',borderRadius:4,overflow:'hidden'}}>
+              <div style={{height:'100%',width:`${ore/maxMonth*100}%`,background:'var(--ac2)',borderRadius:4,transition:'width .5s'}}/>
+            </div>
+            <div style={{fontSize:11,fontFamily:'var(--mono)',width:48,textAlign:'right',color:ore>0?'var(--tx)':'var(--mu2)'}}>{ore>0?ore.toFixed(1)+'h':'—'}</div>
+          </div>)}
+        </div>
+      </div>
+
+      {/* Distribuție tip plan */}
+      <div style={{...css.card(),padding:20}}>
+        <div style={{fontSize:12,fontWeight:600,color:'var(--mu)',fontFamily:'var(--mono)',letterSpacing:1,marginBottom:16}}>DISTRIBUȚIE TIP PLAN</div>
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {byTip.map(([tip,ore])=><div key={tip} style={{display:'flex',alignItems:'center',gap:10}}>
+            <span style={{...css.tipBadge(tip),minWidth:60,textAlign:'center'}}>{tip}</span>
+            <div style={{flex:1,height:8,background:'var(--s2)',borderRadius:4,overflow:'hidden'}}>
+              <div style={{height:'100%',width:`${ore/totalOre*100}%`,background:tipColors[tip]||'var(--mu)',borderRadius:4}}/>
+            </div>
+            <span style={{fontSize:11,fontFamily:'var(--mono)',color:'var(--tx)',width:48,textAlign:'right'}}>{ore.toFixed(1)}h</span>
+            <span style={{fontSize:10,color:'var(--mu)',fontFamily:'var(--mono)',width:36,textAlign:'right'}}>{totalOre>0?(ore/totalOre*100).toFixed(0):'0'}%</span>
+          </div>)}
+        </div>
+      </div>
+
+      {/* Export */}
+      <div style={{...css.card(),padding:20,display:'flex',flexDirection:'column',gap:12}}>
+        <div style={{fontSize:12,fontWeight:600,color:'var(--mu)',fontFamily:'var(--mono)',letterSpacing:1,marginBottom:4}}>EXPORT RAPOARTE</div>
+        {[
+          ['📊 Ore per proiect (CSV)','projects'],
+          ['📅 Ore per lună (CSV)','months'],
+          ['👤 Task-uri detaliate (CSV)','tasks'],
+        ].map(([label,type])=><button key={type} style={{...css.btn('ghost'),justifyContent:'flex-start',fontSize:13,padding:'10px 14px'}} onClick={()=>exportCSV(data,type,year)}>
+          {label}
+        </button>)}
+        <div style={{fontSize:11,color:'var(--mu2)',fontFamily:'var(--mono)',marginTop:4}}>Fișierele CSV se pot deschide în Excel</div>
+      </div>
+    </div>
+  </div>;
+}
+
+function exportCSV(data,type,year){
+  let csv='';
+  if(type==='projects'){
+    const map={};
+    data.forEach(t=>{const k=t.projects?.abreviere||'?';map[k]=(map[k]||0)+(parseFloat(t.ore_calculate)||0);});
+    csv='Proiect,Ore\n'+Object.entries(map).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k},${v.toFixed(2)}`).join('\n');
+  }else if(type==='months'){
+    const arr=Array(12).fill(0);
+    data.forEach(t=>{const m=new Date(t.date).getMonth();arr[m]+=(parseFloat(t.ore_calculate)||0);});
+    csv='Luna,Ore\n'+arr.map((v,i)=>`${MONTHS[i]},${v.toFixed(2)}`).join('\n');
+  }else{
+    csv='Data,Proiect,Tip Plan,Etaj,Descriere,Status,Inceput,Terminat,Ore\n'+
+      data.map(t=>`${t.date},${t.projects?.abreviere||''},${t.tip_plan},${t.etaj},"${t.descriere}",${t.status},${t.ora_inceput?.slice(0,5)||''},${t.ora_terminat?.slice(0,5)||''},${t.ore_calculate||''}`).join('\n');
+  }
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=`plantrack_${type}_${year}.csv`;a.click();URL.revokeObjectURL(url);
+}
+
+// ─── USERS VIEW ──────────────────────────────────────────────
+function UsersView({currentUser}){
+  const[users,setUsers]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[modal,setModal]=useState(null); // null | 'add' | {user for edit/reset}
+  const[toast,setToast]=useState(null);
+  const[form,setForm]=useState({full_name:'',email:'',password:'',role:'inginer'});
+  const[saving,setSaving]=useState(false);
+  const[resetPass,setResetPass]=useState('');
+
+  const fetchUsers=useCallback(async()=>{
+    setLoading(true);
+    const{data}=await supabase.from('profiles').select('*').order('full_name');
+    setUsers(data||[]);setLoading(false);
+  },[]);
+
+  useEffect(()=>{fetchUsers();},[fetchUsers]);
+
+  const COLORS=['#4f7bff','#00d4aa','#ffd166','#f97316','#ef4444','#a78bfa','#34d399','#fb923c'];
+  const getColor=(name)=>COLORS[(name||'').charCodeAt(0)%COLORS.length];
+  const getInitials=(name)=>(name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+
+  const handleAdd=async()=>{
+    if(!form.full_name||!form.email||!form.password){alert('Completează toate câmpurile!');return;}
+    setSaving(true);
+    // 1. Creează user în Supabase Auth via signUp (workaround fără admin SDK)
+    // Folosim un trick: salvăm sesiunea curentă, creăm user nou, restaurăm sesiunea
+    const{data:session}=await supabase.auth.getSession();
+    const{data,error}=await supabase.auth.admin?
+      supabase.auth.admin.createUser({email:form.email,password:form.password,email_confirm:true}):
+      // Fallback: inserăm direct în profiles după ce userul se înregistrează singur
+      {data:null,error:{message:'Metoda admin nu e disponibilă din browser'}};
+
+    if(error){
+      // Metoda alternativă: trimitem invitație sau folosim signUp
+      const{data:newUser,error:signUpErr}=await supabase.auth.signUp({
+        email:form.email,
+        password:form.password,
+        options:{data:{full_name:form.full_name}}
+      });
+      if(signUpErr){setToast({msg:'Eroare: '+signUpErr.message,type:'error'});setSaving(false);return;}
+      if(newUser?.user){
+        await supabase.from('profiles').upsert({id:newUser.user.id,full_name:form.full_name,role:form.role});
+        // Re-login cu adminul curent dacă s-a schimbat sesiunea
+        await supabase.auth.setSession(session.data.session);
+      }
+    } else if(data?.user){
+      await supabase.from('profiles').upsert({id:data.user.id,full_name:form.full_name,role:form.role});
+    }
+
+    setToast({msg:`✓ Utilizator "${form.full_name}" creat! A primit email de confirmare.`,type:'success'});
+    setForm({full_name:'',email:'',password:'',role:'inginer'});
+    setModal(null);setSaving(false);
+    fetchUsers();
+  };
+
+  const handleResetPassword=async(userId)=>{
+    if(!resetPass||resetPass.length<6){alert('Parola trebuie să aibă minim 6 caractere!');return;}
+    setSaving(true);
+    // Actualizăm parola via SQL function (necesită setup în Supabase)
+    const{error}=await supabase.rpc('admin_reset_password',{target_user_id:userId,new_password:resetPass});
+    if(error){
+      setToast({msg:'⚠️ Resetarea parolei necesită configurare extra. Folosește Supabase Dashboard → Authentication → Users.',type:'error'});
+    } else {
+      setToast({msg:'✓ Parolă resetată cu succes!',type:'success'});
+      setModal(null);setResetPass('');
+    }
+    setSaving(false);
+  };
+
+  const handleToggleRole=async(userId,currentRole)=>{
+    const newRole=currentRole==='admin'?'inginer':'admin';
+    if(!confirm(`Schimbi rolul la "${newRole}"?`))return;
+    await supabase.from('profiles').update({role:newRole}).eq('id',userId);
+    setToast({msg:`✓ Rol schimbat în ${newRole}.`,type:'success'});
+    fetchUsers();
+  };
+
+  const handleDelete=async(userId,name)=>{
+    if(userId===currentUser.id){alert('Nu te poți șterge pe tine însuți!');return;}
+    if(!confirm(`Ștergi utilizatorul "${name}"? Task-urile lui rămân în baza de date.`))return;
+    await supabase.from('profiles').delete().eq('id',userId);
+    setToast({msg:`Utilizator "${name}" șters.`,type:'success'});
+    fetchUsers();
+  };
+
+  return<div>
+    {toast&&<Toast {...toast} onClose={()=>setToast(null)}/>}
+
+    {/* Add user modal */}
+    {modal==='add'&&<Modal title="👤 Utilizator Nou" onClose={()=>setModal(null)} width={440}>
+      <div style={{background:'rgba(79,123,255,.08)',border:'1px solid rgba(79,123,255,.2)',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,color:'var(--mu)'}}>
+        ℹ️ Utilizatorul va primi un email de confirmare la adresa specificată. După confirmare se poate loga.
+      </div>
+      <FormGroup label="NUME COMPLET *">
+        <input style={css.input} value={form.full_name} onChange={e=>setForm(f=>({...f,full_name:e.target.value}))} placeholder="ex. Ion Popescu"/>
+      </FormGroup>
+      <FormGroup label="EMAIL *">
+        <input style={css.input} type="email" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder="ion.popescu@firma.ro"/>
+      </FormGroup>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+        <FormGroup label="PAROLĂ INIȚIALĂ *">
+          <input style={css.input} type="password" value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))} placeholder="minim 6 caractere"/>
+        </FormGroup>
+        <FormGroup label="ROL">
+          <select style={css.input} value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))}>
+            <option value="inginer">Inginer</option>
+            <option value="admin">Admin</option>
+          </select>
+        </FormGroup>
+      </div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:10,marginTop:20,paddingTop:16,borderTop:'1px solid var(--bd)'}}>
+        <button style={css.btn('ghost')} onClick={()=>setModal(null)}>Anulează</button>
+        <button style={css.btn('primary')} onClick={handleAdd} disabled={saving}>{saving?'Se creează...':'✓ Creează Utilizator'}</button>
+      </div>
+    </Modal>}
+
+    {/* Reset password modal */}
+    {modal&&modal.id&&<Modal title={`🔑 Resetează Parola — ${modal.full_name}`} onClose={()=>{setModal(null);setResetPass('');}} width={380}>
+      <div style={{background:'rgba(255,209,102,.08)',border:'1px solid rgba(255,209,102,.2)',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,color:'var(--ac4)'}}>
+        ⚠️ Parola va fi schimbată imediat. Comunică-i utilizatorului noua parolă.
+      </div>
+      <FormGroup label="PAROLĂ NOUĂ (minim 6 caractere)">
+        <input style={css.input} type="password" value={resetPass} onChange={e=>setResetPass(e.target.value)} placeholder="parolă nouă..."/>
+      </FormGroup>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:10,marginTop:20,paddingTop:16,borderTop:'1px solid var(--bd)'}}>
+        <button style={css.btn('ghost')} onClick={()=>{setModal(null);setResetPass('');}}>Anulează</button>
+        <button style={css.btn('primary')} onClick={()=>handleResetPassword(modal.id)} disabled={saving}>{saving?'Se salvează...':'✓ Resetează Parola'}</button>
+      </div>
+    </Modal>}
+
+    {/* Header */}
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+      <div>
+        <div style={{fontSize:20,fontWeight:700}}>Echipa</div>
+        <div style={{fontSize:12,color:'var(--mu)',marginTop:2}}>{users.length} utilizatori înregistrați</div>
+      </div>
+      <button style={css.btn('primary')} onClick={()=>setModal('add')}>+ Utilizator Nou</button>
+    </div>
+
+    {/* Users list */}
+    <div style={{...css.card(),overflow:'hidden'}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 180px 100px 140px',background:'var(--s2)',borderBottom:'1px solid var(--bd)'}}>
+        {['UTILIZATOR','EMAIL','ROL','ACȚIUNI'].map(h=><div key={h} style={{padding:'10px 16px',fontSize:10,color:'var(--mu)',fontFamily:'var(--mono)',letterSpacing:.5}}>{h}</div>)}
+      </div>
+      {loading?<div style={{padding:40,textAlign:'center',color:'var(--mu)'}}>Se încarcă...</div>:
+      users.length===0?<div style={{padding:40,textAlign:'center',color:'var(--mu)'}}>Niciun utilizator găsit.</div>:
+      users.map(u=><div key={u.id} style={{display:'grid',gridTemplateColumns:'1fr 180px 100px 140px',borderBottom:'1px solid var(--bd)',transition:'background .1s'}}
+        onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.02)'}
+        onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+        <div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
+          <div style={{width:36,height:36,borderRadius:9,background:getColor(u.full_name),display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:700,color:'white',flexShrink:0}}>
+            {getInitials(u.full_name)}
+          </div>
+          <div>
+            <div style={{fontSize:13,fontWeight:600}}>{u.full_name}</div>
+            <div style={{fontSize:10,color:'var(--mu)',fontFamily:'var(--mono)',marginTop:1}}>
+              {u.id===currentUser.id?'(tu)':''}
+            </div>
+          </div>
+        </div>
+        <div style={{padding:'12px 16px',display:'flex',alignItems:'center',fontSize:12,color:'var(--mu)',fontFamily:'var(--mono)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          —
+        </div>
+        <div style={{padding:'12px 16px',display:'flex',alignItems:'center'}}>
+          <span style={{padding:'3px 10px',borderRadius:5,fontSize:10,fontWeight:600,fontFamily:'var(--mono)',
+            background:u.role==='admin'?'rgba(79,123,255,.15)':'rgba(0,212,170,.15)',
+            color:u.role==='admin'?'var(--ac)':'var(--ac2)'}}>
+            {u.role.toUpperCase()}
+          </span>
+        </div>
+        <div style={{padding:'10px 16px',display:'flex',alignItems:'center',gap:6}}>
+          <button onClick={()=>{setModal(u);setResetPass('');}}
+            title="Resetează parola"
+            style={{padding:'5px 10px',borderRadius:6,background:'transparent',border:'1px solid var(--bd)',color:'var(--mu)',cursor:'pointer',fontSize:11,fontFamily:'var(--sans)',display:'flex',alignItems:'center',gap:4,transition:'all .15s'}}
+            onMouseEnter={e=>{e.currentTarget.style.color='var(--ac4)';e.currentTarget.style.borderColor='var(--ac4)';}}
+            onMouseLeave={e=>{e.currentTarget.style.color='var(--mu)';e.currentTarget.style.borderColor='var(--bd)';}}>
+            🔑 Parolă
+          </button>
+          <button onClick={()=>handleToggleRole(u.id,u.role)}
+            title={u.role==='admin'?'Fă inginer':'Fă admin'}
+            style={{width:28,height:28,borderRadius:6,background:'transparent',border:'1px solid var(--bd)',color:'var(--mu)',cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',transition:'all .15s'}}
+            onMouseEnter={e=>{e.currentTarget.style.color='var(--ac)';e.currentTarget.style.borderColor='var(--ac)';}}
+            onMouseLeave={e=>{e.currentTarget.style.color='var(--mu)';e.currentTarget.style.borderColor='var(--bd)';}}>
+            ⇅
+          </button>
+          {u.id!==currentUser.id&&<button onClick={()=>handleDelete(u.id,u.full_name)}
+            title="Șterge utilizatorul"
+            style={{width:28,height:28,borderRadius:6,background:'transparent',border:'1px solid var(--bd)',color:'var(--mu)',cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',transition:'all .15s'}}
+            onMouseEnter={e=>{e.currentTarget.style.color='var(--re)';e.currentTarget.style.borderColor='var(--re)';}}
+            onMouseLeave={e=>{e.currentTarget.style.color='var(--mu)';e.currentTarget.style.borderColor='var(--bd)';}}>
+            🗑
+          </button>}
+        </div>
+      </div>)}
+    </div>
+
+    <div style={{marginTop:16,padding:'12px 16px',background:'rgba(255,209,102,.06)',border:'1px solid rgba(255,209,102,.15)',borderRadius:10,fontSize:12,color:'var(--mu)'}}>
+      💡 <strong style={{color:'var(--ac4)'}}>Notă:</strong> După ce creezi un utilizator, el trebuie să confirme emailul înainte să se poată loga.
+      Dacă vrei să sari peste confirmarea de email, mergi în <strong>Supabase → Authentication → Settings</strong> și dezactivează <em>"Enable email confirmations"</em>.
+    </div>
+  </div>;
+}
+
+// ─── ADMIN VIEW ───────────────────────────────────────────────
+function AdminView({projects,setProjects,bauteile,setBauteile,holidays,setHolidays}){
+  const [toast,setToast]=useState(null);
+  const [projectModal,setProjectModal]=useState(false);
+  const [holidayModal,setHolidayModal]=useState(false);
+  const [newProject,setNewProject]=useState({name:'',abreviere:'',client:'',bauteile_str:''});
+  const [newHoliday,setNewHoliday]=useState({date:'',name:''});
+
+  const saveProject=async()=>{
+    const{data,error}=await supabase.from('projects').insert({name:newProject.name,abreviere:newProject.abreviere,client:newProject.client}).select().single();
+    if(error){setToast({msg:'Eroare: '+error.message,type:'error'});return;}
+    // Save bauteile
+    if(newProject.bauteile_str.trim()){
+      const bauItems=newProject.bauteile_str.split(',').map(b=>b.trim()).filter(Boolean).map(b=>({project_id:data.id,name:b}));
+      const{data:bd}=await supabase.from('bauteile').insert(bauItems).select();
+      setBauteile(prev=>[...prev,...(bd||[])]);
+    }
+    setProjects(prev=>[...prev,data]);
+    setProjectModal(false);setNewProject({name:'',abreviere:'',client:'',bauteile_str:''});
+    setToast({msg:'✓ Proiect adăugat! Apare la toți utilizatorii.',type:'success'});
+  };
+
+  const deleteProject=async(id)=>{
+    if(!confirm('Ștergi proiectul? Task-urile existente nu vor fi afectate.'))return;
+    await supabase.from('projects').update({active:false}).eq('id',id);
+    setProjects(prev=>prev.filter(p=>p.id!==id));
+    setToast({msg:'Proiect dezactivat.',type:'success'});
+  };
+
+  const saveHoliday=async()=>{
+    const{data,error}=await supabase.from('holidays').insert({...newHoliday,year:new Date(newHoliday.date).getFullYear()}).select().single();
+    if(error){setToast({msg:'Eroare: '+error.message,type:'error'});return;}
+    setHolidays(prev=>[...prev,data].sort((a,b)=>a.date.localeCompare(b.date)));
+    setHolidayModal(false);setNewHoliday({date:'',name:''});
+    setToast({msg:'✓ Zi liberă adăugată pentru toți utilizatorii.',type:'success'});
+  };
+
+  const deleteHoliday=async(id)=>{
+    await supabase.from('holidays').delete().eq('id',id);
+    setHolidays(prev=>prev.filter(h=>h.id!==id));
+    setToast({msg:'Zi liberă ștearsă.',type:'success'});
+  };
+
+  return <div>
+    {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+
+    {projectModal&&<Modal title="📁 Proiect Nou" onClose={()=>setProjectModal(false)}>
+      <FormGroup label="NUME PROIECT *"><input style={css.input} value={newProject.name} onChange={e=>setNewProject(p=>({...p,name:e.target.value}))} placeholder="ex. Neubau München Zentrum"/></FormGroup>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+        <FormGroup label="ABREVIERE *"><input style={css.input} value={newProject.abreviere} onChange={e=>setNewProject(p=>({...p,abreviere:e.target.value}))} placeholder="ex. München_Z"/></FormGroup>
+        <FormGroup label="CLIENT / BENEFICIAR"><input style={css.input} value={newProject.client} onChange={e=>setNewProject(p=>({...p,client:e.target.value}))} placeholder="ex. Köppl"/></FormGroup>
+      </div>
+      <FormGroup label="BAUTEIL (separate prin virgulă, opțional)"><input style={css.input} value={newProject.bauteile_str} onChange={e=>setNewProject(p=>({...p,bauteile_str:e.target.value}))} placeholder="ex. Haus 1, Haus 2, TG"/></FormGroup>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:10,marginTop:20,paddingTop:16,borderTop:'1px solid var(--bd)'}}>
+        <button style={css.btn('ghost')} onClick={()=>setProjectModal(false)}>Anulează</button>
+        <button style={css.btn('primary')} onClick={saveProject}>✓ Adaugă Proiect</button>
+      </div>
+    </Modal>}
+
+    {holidayModal&&<Modal title="🗓 Zi Liberă Nouă" onClose={()=>setHolidayModal(false)} width={360}>
+      <FormGroup label="DATA *"><input style={css.input} type="date" value={newHoliday.date} onChange={e=>setNewHoliday(h=>({...h,date:e.target.value}))}/></FormGroup>
+      <FormGroup label="DENUMIRE SĂRBĂTOARE *"><input style={css.input} value={newHoliday.name} onChange={e=>setNewHoliday(h=>({...h,name:e.target.value}))} placeholder="ex. Ziua Muncii"/></FormGroup>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:10,marginTop:20,paddingTop:16,borderTop:'1px solid var(--bd)'}}>
+        <button style={css.btn('ghost')} onClick={()=>setHolidayModal(false)}>Anulează</button>
+        <button style={css.btn('primary')} onClick={saveHoliday}>✓ Adaugă</button>
+      </div>
+    </Modal>}
+
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+      {/* Projects */}
+      <div style={css.card()}>
+        <div style={{padding:'16px 20px',borderBottom:'1px solid var(--bd)',display:'flex',alignItems:'center',justifyContent:'space-between',background:'var(--s2)',borderRadius:'14px 14px 0 0'}}>
+          <span style={{fontSize:13,fontWeight:600}}>📁 Proiecte ({projects.length})</span>
+          <button style={css.btn('primary',{fontSize:11,padding:'5px 12px'})} onClick={()=>setProjectModal(true)}>+ Adaugă</button>
+        </div>
+        <div style={{padding:'16px 20px',maxHeight:400,overflowY:'auto',display:'flex',flexDirection:'column',gap:8}}>
+          {projects.map(p=><div key={p.id} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:8}}>
+            <div style={{width:24,height:24,borderRadius:6,background:'rgba(79,123,255,.15)',color:'var(--ac)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,fontFamily:'var(--mono)',flexShrink:0}}>{p.id}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</div>
+              <div style={{fontSize:11,color:'var(--mu)',fontFamily:'var(--mono)'}}>{p.client||p.abreviere}</div>
+            </div>
+            <button onClick={()=>deleteProject(p.id)} style={{width:28,height:28,borderRadius:6,background:'transparent',border:'1px solid var(--bd)',color:'var(--mu)',cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center'}} title="Dezactivează">🗑</button>
+          </div>)}
+        </div>
+      </div>
+
+      {/* Holidays */}
+      <div style={css.card()}>
+        <div style={{padding:'16px 20px',borderBottom:'1px solid var(--bd)',display:'flex',alignItems:'center',justifyContent:'space-between',background:'var(--s2)',borderRadius:'14px 14px 0 0'}}>
+          <span style={{fontSize:13,fontWeight:600}}>🗓 Zile Libere</span>
+          <button style={css.btn('ghost',{fontSize:11,padding:'5px 12px'})} onClick={()=>setHolidayModal(true)}>+ Adaugă</button>
+        </div>
+        <div style={{padding:'16px 20px',maxHeight:400,overflowY:'auto',display:'flex',flexDirection:'column',gap:6}}>
+          {holidays.map(h=><div key={h.id} style={{display:'flex',alignItems:'center',gap:12,padding:'8px 12px',background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:8}}>
+            <div style={{fontSize:12,color:'var(--re)',fontFamily:'var(--mono)',width:100,flexShrink:0}}>{h.date}</div>
+            <div style={{flex:1,fontSize:12}}>{h.name}</div>
+            <button onClick={()=>deleteHoliday(h.id)} style={{width:24,height:24,borderRadius:5,background:'transparent',border:'1px solid var(--bd)',color:'var(--mu)',cursor:'pointer',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+          </div>)}
+        </div>
+      </div>
+    </div>
+
+    {/* Legend values */}
+    <div style={{...css.card(),marginTop:20,padding:20}}>
+      <div style={{fontSize:12,fontWeight:600,color:'var(--mu)',fontFamily:'var(--mono)',letterSpacing:1,marginBottom:16}}>📚 VALORI FIXE</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:20}}>
+        <div>
+          <div style={{fontSize:11,color:'var(--mu2)',fontFamily:'var(--mono)',marginBottom:8}}>TIPURI PLAN</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+            {TIP_PLAN.filter(t=>t!=='-').map(t=><span key={t} style={css.tipBadge(t)}>{t}</span>)}
+          </div>
+        </div>
+        <div>
+          <div style={{fontSize:11,color:'var(--mu2)',fontFamily:'var(--mono)',marginBottom:8}}>STATUSURI</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+            {['In lucru','Pauza','Terminat'].map(s=><span key={s} style={css.badge(s)}>{s.toUpperCase()}</span>)}
+          </div>
+        </div>
+        <div>
+          <div style={{fontSize:11,color:'var(--mu2)',fontFamily:'var(--mono)',marginBottom:8}}>SCH / BEW / GEN</div>
+          <div style={{fontSize:12,color:'var(--mu)',fontFamily:'var(--mono)'}}>SCH · BEW · GENERALITATI</div>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────
+function App(){
+  const [user,setUser]=useState(null);
+  const [profile,setProfile]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [view,setView]=useState('tasks');
+  const [projects,setProjects]=useState([]);
+  const [bauteile,setBauteile]=useState([]);
+  const [holidays,setHolidays]=useState([]);
+
+  useEffect(()=>{
+    supabase.auth.getSession().then(async({data:{session}})=>{
+      if(session){
+        const{data:p}=await supabase.from('profiles').select('*').eq('id',session.user.id).single();
+        setUser(session.user);setProfile(p);
+      }
+      setLoading(false);
+    });
+    supabase.auth.onAuthStateChange((_,session)=>{
+      if(!session){setUser(null);setProfile(null);}
+    });
+  },[]);
+
+  useEffect(()=>{
+    if(!user)return;
+    Promise.all([
+      supabase.from('projects').select('*').eq('active',true).order('id'),
+      supabase.from('bauteile').select('*').order('project_id'),
+      supabase.from('holidays').select('*').order('date'),
+    ]).then(([{data:p},{data:b},{data:h}])=>{
+      setProjects(p||[]);setBauteile(b||[]);setHolidays(h||[]);
+    });
+  },[user]);
+
+  const handleLogin=(u,p)=>{setUser(u);setProfile(p);};
+  const handleLogout=async()=>{await supabase.auth.signOut();setUser(null);setProfile(null);};
+
+  if(loading)return<div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--bg)',color:'var(--mu)',fontFamily:'var(--mono)'}}>Se încarcă...</div>;
+  if(!user||!profile)return<LoginPage onLogin={handleLogin}/>;
+
+  const navItems=[
+    {id:'tasks',icon:'📋',label:'Task-uri Zilnice'},
+    {id:'reports',icon:'📊',label:'Rapoarte'},
+    ...(profile.role==='admin'?[
+      {id:'users',icon:'👥',label:'Utilizatori'},
+      {id:'admin',icon:'⚙️',label:'Admin'},
+    ]:[]),
+  ];
+
+  const topbarMeta={tasks:'Task-uri personale',reports:`Rapoarte ${new Date().getFullYear()}`,admin:'Configurare globală',users:'Gestionare utilizatori'};
+
+  return<div style={{display:'flex'}}>
+    <style>{`@keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}`}</style>
+
+    {/* Sidebar */}
+    <aside style={css.sidebar}>
+      <div style={{padding:'24px 20px 20px',borderBottom:'1px solid var(--bd)'}}>
+        <div style={{fontSize:20,fontWeight:700,color:'var(--ac)',letterSpacing:-.5}}>Plan<span style={{color:'var(--ac2)'}}>Track</span></div>
+        <div style={{fontSize:10,color:'var(--mu)',marginTop:2,fontFamily:'var(--mono)',letterSpacing:1}}>TASK MANAGER</div>
+      </div>
+
+      <div style={{margin:'12px 10px',background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:10,padding:'10px 12px',display:'flex',alignItems:'center',gap:10}}>
+        <div style={{width:32,height:32,borderRadius:8,background:'linear-gradient(135deg, var(--ac), var(--ac2))',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'white',flexShrink:0}}>
+          {(profile.full_name||'?').split(' ').map(w=>w[0]).slice(0,2).join('')}
+        </div>
+        <div>
+          <div style={{fontSize:12,fontWeight:600}}>{profile.full_name}</div>
+          <div style={{fontSize:10,color:'var(--mu)',fontFamily:'var(--mono)'}}>{profile.role.toUpperCase()}</div>
+        </div>
+      </div>
+
+      <nav style={{padding:'8px 0',flex:1}}>
+        {navItems.map(item=><div key={item.id} onClick={()=>setView(item.id)} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 16px',cursor:'pointer',fontSize:13,color:view===item.id?'var(--ac)':'var(--mu)',borderLeft:`2px solid ${view===item.id?'var(--ac)':'transparent'}`,background:view===item.id?'rgba(79,123,255,.1)':'transparent',fontWeight:view===item.id?500:400,transition:'all .15s'}}>
+          <span style={{fontSize:15,width:18,textAlign:'center'}}>{item.icon}</span>{item.label}
+        </div>)}
+      </nav>
+
+      <div style={{padding:16,borderTop:'1px solid var(--bd)'}}>
+        <button onClick={handleLogout} style={{...css.btn('ghost'),width:'100%',justifyContent:'center',fontSize:12}}>↩ Deconectare</button>
+      </div>
+    </aside>
+
+    {/* Main */}
+    <main style={css.main}>
+      <div style={css.topbar}>
+        <div style={{fontSize:15,fontWeight:600,flex:1}}>{navItems.find(n=>n.id===view)?.label}</div>
+        <div style={{fontSize:12,color:'var(--mu)',fontFamily:'var(--mono)'}}>{topbarMeta[view]}</div>
+      </div>
+      <div style={css.content}>
+        {view==='tasks'&&<TasksView user={user} profile={profile} projects={projects} bauteile={bauteile} holidays={holidays}/>}
+        {view==='reports'&&<ReportsView user={user} profile={profile} projects={projects}/>}
+        {view==='tasks'&&<TasksView user={user} profile={profile} projects={projects} bauteile={bauteile} holidays={holidays}/>}
+        {view==='reports'&&<ReportsView user={user} profile={profile} projects={projects}/>}
+        {view==='users'&&profile.role==='admin'&&<UsersView currentUser={user}/>}
+        {view==='admin'&&profile.role==='admin'&&<AdminView projects={projects} setProjects={setProjects} bauteile={bauteile} setBauteile={setBauteile} holidays={holidays} setHolidays={setHolidays}/>}
+      </div>
+    </main>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
 
