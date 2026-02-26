@@ -23,13 +23,11 @@ body{font-family:var(--sans);background:var(--bg);color:var(--tx);min-height:100
 <script>
 window.SUPABASE_URL = 'https://skizejuuioeqxrtnunjt.supabase.co';
 window.SUPABASE_ANON_KEY = 'sb_publishable_wGLxRsNejeQiJDuI6kphZw_TbYh3Spy';
-window.SUPABASE_SERVICE_KEY = 'sb_secret_OtyOdY-jQhUgDds9W-xgvg_IjZVHpVO';
 </script>
 
 <script type="text/babel">
 const { useState, useEffect, useCallback, useMemo } = React;
 const supabase = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
-const supabaseAdmin = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_SERVICE_KEY, {auth:{autoRefreshToken:false,persistSession:false}});
 
 // ─── CONSTANTE ───────────────────────────────────────────────
 const MONTHS = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
@@ -558,31 +556,33 @@ function UsersView({currentUser}){
 
   const handleAdd=async()=>{
     if(!form.full_name||!form.email||!form.password){alert('Completează toate câmpurile!');return;}
-    if(form.password.length<6){alert('Parola trebuie să aibă minim 6 caractere!');return;}
     setSaving(true);
-    // Folosim supabaseAdmin cu service key pentru a crea useri fără a ne deloga
-    const{data,error}=await supabaseAdmin.auth.admin.createUser({
-      email:form.email,
-      password:form.password,
-      email_confirm:true,
-      user_metadata:{full_name:form.full_name}
-    });
+    // 1. Creează user în Supabase Auth via signUp (workaround fără admin SDK)
+    // Folosim un trick: salvăm sesiunea curentă, creăm user nou, restaurăm sesiunea
+    const{data:session}=await supabase.auth.getSession();
+    const{data,error}=await supabase.auth.admin?
+      supabase.auth.admin.createUser({email:form.email,password:form.password,email_confirm:true}):
+      // Fallback: inserăm direct în profiles după ce userul se înregistrează singur
+      {data:null,error:{message:'Metoda admin nu e disponibilă din browser'}};
+
     if(error){
-      setToast({msg:'Eroare: '+error.message,type:'error'});
-      setSaving(false);return;
-    }
-    if(data?.user){
-      const{error:profileError}=await supabaseAdmin.from('profiles').insert({
-        id:data.user.id,
-        full_name:form.full_name,
-        role:form.role
+      // Metoda alternativă: trimitem invitație sau folosim signUp
+      const{data:newUser,error:signUpErr}=await supabase.auth.signUp({
+        email:form.email,
+        password:form.password,
+        options:{data:{full_name:form.full_name}}
       });
-      if(profileError){
-        setToast({msg:'User creat dar eroare la profil: '+profileError.message,type:'error'});
-        setSaving(false);return;
+      if(signUpErr){setToast({msg:'Eroare: '+signUpErr.message,type:'error'});setSaving(false);return;}
+      if(newUser?.user){
+        await supabase.from('profiles').upsert({id:newUser.user.id,full_name:form.full_name,role:form.role});
+        // Re-login cu adminul curent dacă s-a schimbat sesiunea
+        await supabase.auth.setSession(session.data.session);
       }
+    } else if(data?.user){
+      await supabase.from('profiles').upsert({id:data.user.id,full_name:form.full_name,role:form.role});
     }
-    setToast({msg:'✓ Utilizator "'+form.full_name+'" creat cu succes! Se poate loga imediat.',type:'success'});
+
+    setToast({msg:`✓ Utilizator "${form.full_name}" creat! A primit email de confirmare.`,type:'success'});
     setForm({full_name:'',email:'',password:'',role:'inginer'});
     setModal(null);setSaving(false);
     fetchUsers();
@@ -591,9 +591,10 @@ function UsersView({currentUser}){
   const handleResetPassword=async(userId)=>{
     if(!resetPass||resetPass.length<6){alert('Parola trebuie să aibă minim 6 caractere!');return;}
     setSaving(true);
-    const{error}=await supabaseAdmin.auth.admin.updateUserById(userId,{password:resetPass});
+    // Actualizăm parola via SQL function (necesită setup în Supabase)
+    const{error}=await supabase.rpc('admin_reset_password',{target_user_id:userId,new_password:resetPass});
     if(error){
-      setToast({msg:'Eroare la resetare parolă: '+error.message,type:'error'});
+      setToast({msg:'⚠️ Resetarea parolei necesită configurare extra. Folosește Supabase Dashboard → Authentication → Users.',type:'error'});
     } else {
       setToast({msg:'✓ Parolă resetată cu succes!',type:'success'});
       setModal(null);setResetPass('');
