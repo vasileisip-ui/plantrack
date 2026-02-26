@@ -556,43 +556,33 @@ function UsersView({currentUser}){
   const getColor=(name)=>COLORS[(name||'').charCodeAt(0)%COLORS.length];
   const getInitials=(name)=>(name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
 
-  const adminFetch=async(path,method='GET',body=null)=>{
-    const res=await fetch(window.SUPABASE_URL+path,{
-      method,
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+window.SUPABASE_SERVICE_KEY,'apikey':window.SUPABASE_SERVICE_KEY},
-      ...(body?{body:JSON.stringify(body)}:{})
-    });
-    const data=await res.json();
-    if(!res.ok)return{data:null,error:data};
-    return{data,error:null};
-  };
-
   const handleAdd=async()=>{
     if(!form.full_name||!form.email||!form.password){alert('Completează toate câmpurile!');return;}
     if(form.password.length<6){alert('Parola trebuie să aibă minim 6 caractere!');return;}
     setSaving(true);
-    // Creează userul via REST API direct cu service key
-    const{data,error}=await adminFetch('/auth/v1/admin/users','POST',{
+    // Folosim supabaseAdmin cu service key pentru a crea useri fără a ne deloga
+    const{data,error}=await supabaseAdmin.auth.admin.createUser({
       email:form.email,
       password:form.password,
       email_confirm:true,
       user_metadata:{full_name:form.full_name}
     });
     if(error){
-      setToast({msg:'Eroare creare user: '+(error.message||error.msg||JSON.stringify(error)),type:'error'});
+      setToast({msg:'Eroare: '+error.message,type:'error'});
       setSaving(false);return;
     }
-    // Adaugă profilul în tabela profiles
-    const{error:profileError}=await adminFetch('/rest/v1/profiles','POST',{
-      id:data.id,
-      full_name:form.full_name,
-      role:form.role
-    });
-    if(profileError){
-      setToast({msg:'User creat dar eroare profil: '+(profileError.message||JSON.stringify(profileError)),type:'error'});
-      setSaving(false);return;
+    if(data?.user){
+      const{error:profileError}=await supabaseAdmin.from('profiles').insert({
+        id:data.user.id,
+        full_name:form.full_name,
+        role:form.role
+      });
+      if(profileError){
+        setToast({msg:'User creat dar eroare la profil: '+profileError.message,type:'error'});
+        setSaving(false);return;
+      }
     }
-    setToast({msg:'✓ Utilizator "'+form.full_name+'" creat! Se poate loga imediat.',type:'success'});
+    setToast({msg:'✓ Utilizator "'+form.full_name+'" creat cu succes! Se poate loga imediat.',type:'success'});
     setForm({full_name:'',email:'',password:'',role:'inginer'});
     setModal(null);setSaving(false);
     fetchUsers();
@@ -601,9 +591,9 @@ function UsersView({currentUser}){
   const handleResetPassword=async(userId)=>{
     if(!resetPass||resetPass.length<6){alert('Parola trebuie să aibă minim 6 caractere!');return;}
     setSaving(true);
-    const{error}=await adminFetch('/auth/v1/admin/users/'+userId,'PUT',{password:resetPass});
+    const{error}=await supabaseAdmin.auth.admin.updateUserById(userId,{password:resetPass});
     if(error){
-      setToast({msg:'Eroare resetare parolă: '+(error.message||JSON.stringify(error)),type:'error'});
+      setToast({msg:'Eroare la resetare parolă: '+error.message,type:'error'});
     } else {
       setToast({msg:'✓ Parolă resetată cu succes!',type:'success'});
       setModal(null);setResetPass('');
