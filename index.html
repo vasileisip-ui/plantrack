@@ -21,8 +21,8 @@ body{font-family:var(--sans);background:var(--bg);color:var(--tx);min-height:100
 
 <!-- ⚠️ CONFIGURARE: Înlocuiește cu datele tale din Supabase -->
 <script>
-window.SUPABASE_URL = 'https://skizejuuioeqxrtnunjt.supabase.co';
-window.SUPABASE_ANON_KEY = 'sb_publishable_wGLxRsNejeQiJDuI6kphZw_TbYh3Spy';
+window.SUPABASE_URL = 'https://PROIECT_TÂU.supabase.co';
+window.SUPABASE_ANON_KEY = 'ANON_KEY_DE_LA_SUPABASE';
 </script>
 
 <script type="text/babel">
@@ -532,6 +532,210 @@ function exportCSV(data,type,year){
   const a=document.createElement('a');a.href=url;a.download=`plantrack_${type}_${year}.csv`;a.click();URL.revokeObjectURL(url);
 }
 
+// ─── USERS VIEW ──────────────────────────────────────────────
+function UsersView({currentUser}){
+  const[users,setUsers]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[modal,setModal]=useState(null); // null | 'add' | {user for edit/reset}
+  const[toast,setToast]=useState(null);
+  const[form,setForm]=useState({full_name:'',email:'',password:'',role:'inginer'});
+  const[saving,setSaving]=useState(false);
+  const[resetPass,setResetPass]=useState('');
+
+  const fetchUsers=useCallback(async()=>{
+    setLoading(true);
+    const{data}=await supabase.from('profiles').select('*').order('full_name');
+    setUsers(data||[]);setLoading(false);
+  },[]);
+
+  useEffect(()=>{fetchUsers();},[fetchUsers]);
+
+  const COLORS=['#4f7bff','#00d4aa','#ffd166','#f97316','#ef4444','#a78bfa','#34d399','#fb923c'];
+  const getColor=(name)=>COLORS[(name||'').charCodeAt(0)%COLORS.length];
+  const getInitials=(name)=>(name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+
+  const handleAdd=async()=>{
+    if(!form.full_name||!form.email||!form.password){alert('Completează toate câmpurile!');return;}
+    setSaving(true);
+    // 1. Creează user în Supabase Auth via signUp (workaround fără admin SDK)
+    // Folosim un trick: salvăm sesiunea curentă, creăm user nou, restaurăm sesiunea
+    const{data:session}=await supabase.auth.getSession();
+    const{data,error}=await supabase.auth.admin?
+      supabase.auth.admin.createUser({email:form.email,password:form.password,email_confirm:true}):
+      // Fallback: inserăm direct în profiles după ce userul se înregistrează singur
+      {data:null,error:{message:'Metoda admin nu e disponibilă din browser'}};
+
+    if(error){
+      // Metoda alternativă: trimitem invitație sau folosim signUp
+      const{data:newUser,error:signUpErr}=await supabase.auth.signUp({
+        email:form.email,
+        password:form.password,
+        options:{data:{full_name:form.full_name}}
+      });
+      if(signUpErr){setToast({msg:'Eroare: '+signUpErr.message,type:'error'});setSaving(false);return;}
+      if(newUser?.user){
+        await supabase.from('profiles').upsert({id:newUser.user.id,full_name:form.full_name,role:form.role});
+        // Re-login cu adminul curent dacă s-a schimbat sesiunea
+        await supabase.auth.setSession(session.data.session);
+      }
+    } else if(data?.user){
+      await supabase.from('profiles').upsert({id:data.user.id,full_name:form.full_name,role:form.role});
+    }
+
+    setToast({msg:`✓ Utilizator "${form.full_name}" creat! A primit email de confirmare.`,type:'success'});
+    setForm({full_name:'',email:'',password:'',role:'inginer'});
+    setModal(null);setSaving(false);
+    fetchUsers();
+  };
+
+  const handleResetPassword=async(userId)=>{
+    if(!resetPass||resetPass.length<6){alert('Parola trebuie să aibă minim 6 caractere!');return;}
+    setSaving(true);
+    // Actualizăm parola via SQL function (necesită setup în Supabase)
+    const{error}=await supabase.rpc('admin_reset_password',{target_user_id:userId,new_password:resetPass});
+    if(error){
+      setToast({msg:'⚠️ Resetarea parolei necesită configurare extra. Folosește Supabase Dashboard → Authentication → Users.',type:'error'});
+    } else {
+      setToast({msg:'✓ Parolă resetată cu succes!',type:'success'});
+      setModal(null);setResetPass('');
+    }
+    setSaving(false);
+  };
+
+  const handleToggleRole=async(userId,currentRole)=>{
+    const newRole=currentRole==='admin'?'inginer':'admin';
+    if(!confirm(`Schimbi rolul la "${newRole}"?`))return;
+    await supabase.from('profiles').update({role:newRole}).eq('id',userId);
+    setToast({msg:`✓ Rol schimbat în ${newRole}.`,type:'success'});
+    fetchUsers();
+  };
+
+  const handleDelete=async(userId,name)=>{
+    if(userId===currentUser.id){alert('Nu te poți șterge pe tine însuți!');return;}
+    if(!confirm(`Ștergi utilizatorul "${name}"? Task-urile lui rămân în baza de date.`))return;
+    await supabase.from('profiles').delete().eq('id',userId);
+    setToast({msg:`Utilizator "${name}" șters.`,type:'success'});
+    fetchUsers();
+  };
+
+  return<div>
+    {toast&&<Toast {...toast} onClose={()=>setToast(null)}/>}
+
+    {/* Add user modal */}
+    {modal==='add'&&<Modal title="👤 Utilizator Nou" onClose={()=>setModal(null)} width={440}>
+      <div style={{background:'rgba(79,123,255,.08)',border:'1px solid rgba(79,123,255,.2)',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,color:'var(--mu)'}}>
+        ℹ️ Utilizatorul va primi un email de confirmare la adresa specificată. După confirmare se poate loga.
+      </div>
+      <FormGroup label="NUME COMPLET *">
+        <input style={css.input} value={form.full_name} onChange={e=>setForm(f=>({...f,full_name:e.target.value}))} placeholder="ex. Ion Popescu"/>
+      </FormGroup>
+      <FormGroup label="EMAIL *">
+        <input style={css.input} type="email" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder="ion.popescu@firma.ro"/>
+      </FormGroup>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+        <FormGroup label="PAROLĂ INIȚIALĂ *">
+          <input style={css.input} type="password" value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))} placeholder="minim 6 caractere"/>
+        </FormGroup>
+        <FormGroup label="ROL">
+          <select style={css.input} value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))}>
+            <option value="inginer">Inginer</option>
+            <option value="admin">Admin</option>
+          </select>
+        </FormGroup>
+      </div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:10,marginTop:20,paddingTop:16,borderTop:'1px solid var(--bd)'}}>
+        <button style={css.btn('ghost')} onClick={()=>setModal(null)}>Anulează</button>
+        <button style={css.btn('primary')} onClick={handleAdd} disabled={saving}>{saving?'Se creează...':'✓ Creează Utilizator'}</button>
+      </div>
+    </Modal>}
+
+    {/* Reset password modal */}
+    {modal&&modal.id&&<Modal title={`🔑 Resetează Parola — ${modal.full_name}`} onClose={()=>{setModal(null);setResetPass('');}} width={380}>
+      <div style={{background:'rgba(255,209,102,.08)',border:'1px solid rgba(255,209,102,.2)',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,color:'var(--ac4)'}}>
+        ⚠️ Parola va fi schimbată imediat. Comunică-i utilizatorului noua parolă.
+      </div>
+      <FormGroup label="PAROLĂ NOUĂ (minim 6 caractere)">
+        <input style={css.input} type="password" value={resetPass} onChange={e=>setResetPass(e.target.value)} placeholder="parolă nouă..."/>
+      </FormGroup>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:10,marginTop:20,paddingTop:16,borderTop:'1px solid var(--bd)'}}>
+        <button style={css.btn('ghost')} onClick={()=>{setModal(null);setResetPass('');}}>Anulează</button>
+        <button style={css.btn('primary')} onClick={()=>handleResetPassword(modal.id)} disabled={saving}>{saving?'Se salvează...':'✓ Resetează Parola'}</button>
+      </div>
+    </Modal>}
+
+    {/* Header */}
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+      <div>
+        <div style={{fontSize:20,fontWeight:700}}>Echipa</div>
+        <div style={{fontSize:12,color:'var(--mu)',marginTop:2}}>{users.length} utilizatori înregistrați</div>
+      </div>
+      <button style={css.btn('primary')} onClick={()=>setModal('add')}>+ Utilizator Nou</button>
+    </div>
+
+    {/* Users list */}
+    <div style={{...css.card(),overflow:'hidden'}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 180px 100px 140px',background:'var(--s2)',borderBottom:'1px solid var(--bd)'}}>
+        {['UTILIZATOR','EMAIL','ROL','ACȚIUNI'].map(h=><div key={h} style={{padding:'10px 16px',fontSize:10,color:'var(--mu)',fontFamily:'var(--mono)',letterSpacing:.5}}>{h}</div>)}
+      </div>
+      {loading?<div style={{padding:40,textAlign:'center',color:'var(--mu)'}}>Se încarcă...</div>:
+      users.length===0?<div style={{padding:40,textAlign:'center',color:'var(--mu)'}}>Niciun utilizator găsit.</div>:
+      users.map(u=><div key={u.id} style={{display:'grid',gridTemplateColumns:'1fr 180px 100px 140px',borderBottom:'1px solid var(--bd)',transition:'background .1s'}}
+        onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.02)'}
+        onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+        <div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
+          <div style={{width:36,height:36,borderRadius:9,background:getColor(u.full_name),display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:700,color:'white',flexShrink:0}}>
+            {getInitials(u.full_name)}
+          </div>
+          <div>
+            <div style={{fontSize:13,fontWeight:600}}>{u.full_name}</div>
+            <div style={{fontSize:10,color:'var(--mu)',fontFamily:'var(--mono)',marginTop:1}}>
+              {u.id===currentUser.id?'(tu)':''}
+            </div>
+          </div>
+        </div>
+        <div style={{padding:'12px 16px',display:'flex',alignItems:'center',fontSize:12,color:'var(--mu)',fontFamily:'var(--mono)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          —
+        </div>
+        <div style={{padding:'12px 16px',display:'flex',alignItems:'center'}}>
+          <span style={{padding:'3px 10px',borderRadius:5,fontSize:10,fontWeight:600,fontFamily:'var(--mono)',
+            background:u.role==='admin'?'rgba(79,123,255,.15)':'rgba(0,212,170,.15)',
+            color:u.role==='admin'?'var(--ac)':'var(--ac2)'}}>
+            {u.role.toUpperCase()}
+          </span>
+        </div>
+        <div style={{padding:'10px 16px',display:'flex',alignItems:'center',gap:6}}>
+          <button onClick={()=>{setModal(u);setResetPass('');}}
+            title="Resetează parola"
+            style={{padding:'5px 10px',borderRadius:6,background:'transparent',border:'1px solid var(--bd)',color:'var(--mu)',cursor:'pointer',fontSize:11,fontFamily:'var(--sans)',display:'flex',alignItems:'center',gap:4,transition:'all .15s'}}
+            onMouseEnter={e=>{e.currentTarget.style.color='var(--ac4)';e.currentTarget.style.borderColor='var(--ac4)';}}
+            onMouseLeave={e=>{e.currentTarget.style.color='var(--mu)';e.currentTarget.style.borderColor='var(--bd)';}}>
+            🔑 Parolă
+          </button>
+          <button onClick={()=>handleToggleRole(u.id,u.role)}
+            title={u.role==='admin'?'Fă inginer':'Fă admin'}
+            style={{width:28,height:28,borderRadius:6,background:'transparent',border:'1px solid var(--bd)',color:'var(--mu)',cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',transition:'all .15s'}}
+            onMouseEnter={e=>{e.currentTarget.style.color='var(--ac)';e.currentTarget.style.borderColor='var(--ac)';}}
+            onMouseLeave={e=>{e.currentTarget.style.color='var(--mu)';e.currentTarget.style.borderColor='var(--bd)';}}>
+            ⇅
+          </button>
+          {u.id!==currentUser.id&&<button onClick={()=>handleDelete(u.id,u.full_name)}
+            title="Șterge utilizatorul"
+            style={{width:28,height:28,borderRadius:6,background:'transparent',border:'1px solid var(--bd)',color:'var(--mu)',cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',transition:'all .15s'}}
+            onMouseEnter={e=>{e.currentTarget.style.color='var(--re)';e.currentTarget.style.borderColor='var(--re)';}}
+            onMouseLeave={e=>{e.currentTarget.style.color='var(--mu)';e.currentTarget.style.borderColor='var(--bd)';}}>
+            🗑
+          </button>}
+        </div>
+      </div>)}
+    </div>
+
+    <div style={{marginTop:16,padding:'12px 16px',background:'rgba(255,209,102,.06)',border:'1px solid rgba(255,209,102,.15)',borderRadius:10,fontSize:12,color:'var(--mu)'}}>
+      💡 <strong style={{color:'var(--ac4)'}}>Notă:</strong> După ce creezi un utilizator, el trebuie să confirme emailul înainte să se poată loga.
+      Dacă vrei să sari peste confirmarea de email, mergi în <strong>Supabase → Authentication → Settings</strong> și dezactivează <em>"Enable email confirmations"</em>.
+    </div>
+  </div>;
+}
+
 // ─── ADMIN VIEW ───────────────────────────────────────────────
 function AdminView({projects,setProjects,bauteile,setBauteile,holidays,setHolidays}){
   const [toast,setToast]=useState(null);
@@ -703,10 +907,13 @@ function App(){
   const navItems=[
     {id:'tasks',icon:'📋',label:'Task-uri Zilnice'},
     {id:'reports',icon:'📊',label:'Rapoarte'},
-    ...(profile.role==='admin'?[{id:'admin',icon:'⚙️',label:'Admin'}]:[]),
+    ...(profile.role==='admin'?[
+      {id:'users',icon:'👥',label:'Utilizatori'},
+      {id:'admin',icon:'⚙️',label:'Admin'},
+    ]:[]),
   ];
 
-  const topbarMeta={tasks:'Task-uri personale',reports:`Rapoarte ${new Date().getFullYear()}`,admin:'Configurare globală'};
+  const topbarMeta={tasks:'Task-uri personale',reports:`Rapoarte ${new Date().getFullYear()}`,admin:'Configurare globală',users:'Gestionare utilizatori'};
 
   return<div style={{display:'flex'}}>
     <style>{`@keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}`}</style>
@@ -748,6 +955,9 @@ function App(){
       <div style={css.content}>
         {view==='tasks'&&<TasksView user={user} profile={profile} projects={projects} bauteile={bauteile} holidays={holidays}/>}
         {view==='reports'&&<ReportsView user={user} profile={profile} projects={projects}/>}
+        {view==='tasks'&&<TasksView user={user} profile={profile} projects={projects} bauteile={bauteile} holidays={holidays}/>}
+        {view==='reports'&&<ReportsView user={user} profile={profile} projects={projects}/>}
+        {view==='users'&&profile.role==='admin'&&<UsersView currentUser={user}/>}
         {view==='admin'&&profile.role==='admin'&&<AdminView projects={projects} setProjects={setProjects} bauteile={bauteile} setBauteile={setBauteile} holidays={holidays} setHolidays={setHolidays}/>}
       </div>
     </main>
