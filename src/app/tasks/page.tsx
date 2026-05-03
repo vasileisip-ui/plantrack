@@ -1,5 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
+import TaskComments from '@/components/TaskComments'
+import TaskHistory from '@/components/TaskHistory'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase, Task, MONTHS_RO, TIP_BADGE, STATUS_BADGE, STATUS_LABEL, SCH_BADGE } from '@/lib/supabase'
 import Sidebar from '@/components/Sidebar'
@@ -300,6 +302,7 @@ function ProjectCell({ projects, value, task, dateStr, taskNum, onSave, fetchTas
   const [form, setForm] = useState<any>(null)
   const [bauteile, setBauteile] = useState<any[]>([])
   const [saving, setSaving] = useState(false)
+  const [activeModalTab, setActiveModalTab] = useState<'comments'|'history'>('comments')
 
   function openForm() {
     setForm(task ? {
@@ -465,10 +468,21 @@ function ProjectCell({ projects, value, task, dateStr, taskNum, onSave, fetchTas
                 </div>
 
                 <div className="modal-actions">
+                  {task && <button className="btn btn-ghost btn-sm" onClick={() => { const copy = {...form}; save().then(() => { setForm(copy) }) }} title="Duplică taskul">📋 Duplică</button>}
                   {task && <button className="btn btn-danger" onClick={deleteTask}>🗑 Șterge</button>}
                   <button className="btn btn-ghost" onClick={() => setOpen(false)}>Anulează</button>
                   <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Se salvează...' : '💾 Salvează'}</button>
                 </div>
+                {task && (
+                  <div style={{ marginTop:20, paddingTop:16, borderTop:'1px solid var(--border)' }}>
+                    <div className="tab-row" style={{ marginBottom:12 }}>
+                      <button className={`tab-btn ${activeModalTab==='comments'?'active':''}`} onClick={() => setActiveModalTab('comments')}>💬 Comentarii</button>
+                      <button className={`tab-btn ${activeModalTab==='history'?'active':''}`} onClick={() => setActiveModalTab('history')}>📋 Istoric</button>
+                    </div>
+                    {activeModalTab === 'comments' && <TaskComments taskId={task.id} />}
+                    {activeModalTab === 'history' && <TaskHistory taskId={task.id} />}
+                  </div>
+                )}
               </>
             )}
           </div>

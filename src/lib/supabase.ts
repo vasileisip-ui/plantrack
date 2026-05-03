@@ -19,3 +19,43 @@ export const SCH_OPTIONS=['SCH','BEW','GENERALITATI']
 
 export type AppSetting = { key: string; value: string }
 export type ListItem = { id: string; list_name: string; value: string; order_index: number; active: boolean }
+
+export type TaskComment = {
+  id: string; task_id: string; user_id: string; parent_id?: string
+  content: string; created_at: string; updated_at: string
+  profile?: Profile; replies?: TaskComment[]
+}
+export type TaskHistory = {
+  id: string; task_id: string; user_id?: string
+  field_name: string; old_value?: string; new_value?: string
+  changed_at: string; profile?: Profile
+}
+
+// Correct hours calculation
+export function calcHoursCorrect(start?: string, pause?: string, end?: string): number | null {
+  if (!start || !end) return null
+  const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+  const startMin = toMin(start)
+  const endMin = toMin(end)
+  let workedMin = endMin - startMin
+  if (workedMin <= 0) return null
+  // If pause time provided, calculate pause duration from start to pause
+  // Pause = ora la care a inceput pauza, deci munca = start->pause + (end->end fara pauza)
+  // Formula corecta: daca avem pauza, angajatul a lucrat de la start la pause, a facut pauza, si a reluat
+  // Dar nu stim cat a durat pauza. Conventie: pauza = ora la care incepe, terminat = ora la care termina complet
+  // Deci: ore lucrate = (pause - start) + (end - pause) = end - start... dar asta nu are sens
+  // Conventie corecta din Excel: Inceput=08:00, Pauza=12:00(ora la care pleaca), Terminat=16:00(ora la care pleaca acasa)
+  // Ore lucrate = (Pauza - Inceput) + ??? Nu stim cand s-a intors din pauza
+  // SIMPLIFICAT: Ore = Terminat - Inceput (pauza e indicativa, nu dedusa)
+  // Sau: daca pauza e ora pranzului (ex 12:00-13:00 = 1h), ore = (end-start) - 1h
+  // Din Excel original: ore = end - start (pauza nu se deduce automat)
+  return workedMin / 60
+}
+
+export const FIELD_LABELS: Record<string, string> = {
+  project_id: 'Proiect', bauteil_id: 'Bauteil', sch_bew_gen: 'SCH/BEW/GEN',
+  plan_number: 'Nr. Plan', floor: 'Etaj', plan_description: 'Descriere',
+  status: 'Status', tip_plan: 'Tip Plan', time_start: 'Început',
+  time_pause: 'Pauză', time_end: 'Terminat', hours_worked: 'Ore',
+  correction_date: 'Data Corecție', verified: 'Verificat', notes: 'Observații'
+}

@@ -2,7 +2,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase, Profile, Project, MONTHS_RO } from '@/lib/supabase'
 import Sidebar from '@/components/Sidebar'
-import { exportExcel, TASKS_COLUMNS, SUMMARY_COLUMNS, flattenTask } from '@/lib/exportExcel'
+import { exportExcel, TASKS_COLUMNS, SUMMARY_COLUMNS, PROJECT_COLUMNS, flattenTask } from '@/lib/exportExcel'
+import { generatePDFReport } from '@/lib/exportPDF'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 
 const TIP_BADGE: Record<string,string> = { NOU:'badge-nou',C_DE:'badge-cde',C_LMT:'badge-clmt',FREI:'badge-frei',NTR:'badge-ntr',MKT:'badge-mkt',MKT_45:'badge-mkt' }
@@ -13,86 +14,157 @@ const MONTHS_SHORT = ['Ian','Feb','Mar','Apr','Mai','Iun','Iul','Aug','Sep','Oct
 
 export default function AdminReportsPage() {
   const [users, setUsers] = useState<Profile[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
+  const [projects, setProjects] = useState<any[]>([])
   const [tasks, setTasks] = useState<any[]>([])
+  const [allTasks, setAllTasks] = useState<any[]>([]) // unfiltered for full export
   const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
   const [view, setView] = useState<'overview'|'tasks'>('overview')
+  const [companyName, setCompanyName] = useState('LMT Ingenieure')
   const [filters, setFilters] = useState({
-    year: new Date().getFullYear(), month:'', userId:'', projectId:'', status:'', tipPlan:'',
+    year: new Date().getFullYear(), month: String(new Date().getMonth()+1).padStart(2,'0'),
+    userId:'', projectId:'', status:'', tipPlan:'',
   })
 
   useEffect(() => {
-    supabase.from('profiles').select('*').eq('role','user').order('full_name').then(({data}) => setUsers(data||[]))
-    supabase.from('projects').select('*').eq('active',true).order('name').then(({data}) => setProjects(data||[]))
+    supabase.from('profiles').select('*').eq('role','user').order('full_name').then(({data})=>setUsers(data||[]))
+    supabase.from('projects').select('*, beneficiary:beneficiaries(name)').eq('active',true).order('name').then(({data})=>setProjects(data||[]))
+    supabase.from('app_settings').select('value').eq('key','company_name').single().then(({data})=>{ if(data) setCompanyName(data.value) })
   }, [])
 
   const fetchTasks = useCallback(async () => {
     setLoading(true)
     let query = supabase.from('tasks')
-      .select('*, profile:profiles(full_name,username), project:projects(name,abbreviation), bauteil:bauteile(name)')
+      .select('*, profile:profiles(full_name,username), project:projects(name,abbreviation,beneficiary:beneficiaries(name)), bauteil:bauteile(name)')
       .gte('task_date',`${filters.year}-01-01`).lte('task_date',`${filters.year}-12-31`)
       .order('task_date',{ascending:false}).order('task_number')
-    if (filters.month) query = query.like('month',`${filters.year}-${filters.month.padStart(2,'0')}`)
+    if (filters.month) query = query.like('month',`${filters.year}-${filters.month}`)
     if (filters.userId) query = query.eq('user_id',filters.userId)
     if (filters.projectId) query = query.eq('project_id',filters.projectId)
     if (filters.status) query = query.eq('status',filters.status)
     if (filters.tipPlan) query = query.eq('tip_plan',filters.tipPlan)
     const {data} = await query
     setTasks(data||[])
+    // Also fetch all tasks for the year (unfiltered) for full export
+    const {data: all} = await supabase.from('tasks')
+      .select('*, profile:profiles(full_name,username), project:projects(name,abbreviation), bauteil:bauteile(name)')
+      .gte('task_date',`${filters.year}-01-01`).lte('task_date',`${filters.year}-12-31`)
+      .order('task_date').order('task_number')
+    setAllTasks(all||[])
     setLoading(false)
   }, [filters])
 
   useEffect(() => { fetchTasks() }, [fetchTasks])
 
-  // Export Excel - Tasks
-  async function exportTasksExcel() {
+  // Export all tasks (no filter)
+  async function exportAllExcel() {
     setExporting(true)
-    const rows = tasks.map(flattenTask)
-    const yr = filters.year
-    const mo = filters.month ? `_${MONTHS_RO[parseInt(filters.month)-1]}` : ''
-    await exportExcel(rows, TASKS_COLUMNS, `PlanTracker_Taskuri_${yr}${mo}`)
+    const rows = allTasks.map(flattenTask)
+    await exportExcel(rows, TASKS_COLUMNS, `PlanTracker_TOT_${filters.year}`)
     setExporting(false)
   }
 
-  // Export Excel - Summary per user
+  // Export filtered tasks
+  async function exportFilteredExcel() {
+    setExporting(true)
+    const rows = tasks.map(flattenTask)
+    const mo = filters.month ? `_${MONTHS_RO[parseInt(filters.month)-1]}` : ''
+    await exportExcel(rows, TASKS_COLUMNS, `PlanTracker_Filtrat_${filters.year}${mo}`)
+    setExporting(false)
+  }
+
+  // Export summary
   async function exportSummaryExcel() {
     setExporting(true)
     const rows = userSummary.map(u => ({
-      full_name: u.full_name,
-      username: `@${u.username}`,
-      hours: u.hours,
-      days: u.days,
-      NOU: u.tipCounts['NOU']||0,
-      C_DE: u.tipCounts['C_DE']||0,
-      C_LMT: u.tipCounts['C_LMT']||0,
-      FREI: u.tipCounts['FREI']||0,
-      NTR: u.tipCounts['NTR']||0,
-      MKT: u.tipCounts['MKT']||0,
-      terminated: u.taskCount,
+      full_name: u.full_name, username: `@${u.username}`,
+      hours: u.hours, days: u.days,
+      NOU: u.tipCounts['NOU']||0, C_DE: u.tipCounts['C_DE']||0,
+      C_LMT: u.tipCounts['C_LMT']||0, FREI: u.tipCounts['FREI']||0,
+      NTR: u.tipCounts['NTR']||0, MKT: u.tipCounts['MKT']||0,
+      terminated: Object.values(u.tipCounts).reduce((a:any,b:any)=>a+b,0),
     }))
     await exportExcel(rows, SUMMARY_COLUMNS, `PlanTracker_Sumar_${filters.year}`)
     setExporting(false)
   }
 
-  const totalHours = tasks.reduce((s,t) => s+(t.hours_worked||0), 0)
-  const terminated = tasks.filter(t => t.status==='TERMINAT').length
-  const nouTerminated = tasks.filter(t => t.tip_plan==='NOU' && t.status==='TERMINAT').length
+  // Export project summary
+  async function exportProjectExcel() {
+    setExporting(true)
+    const rows = projectSummary.map(p => ({
+      project_abbr: p.abbr, project_name: p.name,
+      beneficiary: p.beneficiary||'', hours: p.totalHours,
+      angajati: p.users.join(', '),
+      NOU: p.tipCounts['NOU']||0, C_DE: p.tipCounts['C_DE']||0,
+      C_LMT: p.tipCounts['C_LMT']||0, FREI: p.tipCounts['FREI']||0,
+    }))
+    await exportExcel(rows, PROJECT_COLUMNS, `PlanTracker_Proiecte_${filters.year}`)
+    setExporting(false)
+  }
+
+  // PDF Report
+  async function exportPDF() {
+    setExporting(true)
+    const mo = filters.month || String(new Date().getMonth()+1).padStart(2,'0')
+    // Build per-user data
+    const userReports = userSummary.map(u => {
+      const uTasks = tasks.filter(t=>t.user_id===u.id)
+      const projMap: Record<string,{abbr:string;name:string;hours:number;tasks:number}> = {}
+      uTasks.forEach(t => {
+        const abbr = t.project?.abbreviation||'—'
+        if (!projMap[abbr]) projMap[abbr] = {abbr, name:t.project?.name||'', hours:0, tasks:0}
+        projMap[abbr].hours += t.hours_worked||0
+        projMap[abbr].tasks++
+      })
+      return { userId:u.id, userName:u.full_name, totalHours:u.hours, workDays:u.days, tipCounts:u.tipCounts, projects:Object.values(projMap), tasks:uTasks }
+    })
+    // Build project summary
+    const projMap2: Record<string,any> = {}
+    tasks.forEach(t => {
+      const abbr = t.project?.abbreviation||'—'
+      if (!projMap2[abbr]) projMap2[abbr] = { abbr, name:t.project?.name||'', beneficiary:(t.project as any)?.beneficiary?.name||'', totalHours:0, users:new Set(), tipCounts:{NOU:0,C_DE:0,C_LMT:0,FREI:0,NTR:0,MKT:0} }
+      projMap2[abbr].totalHours += t.hours_worked||0
+      projMap2[abbr].users.add(t.profile?.full_name||'')
+      if (t.status==='TERMINAT' && t.tip_plan && projMap2[abbr].tipCounts[t.tip_plan]!==undefined) projMap2[abbr].tipCounts[t.tip_plan]++
+    })
+    const projectSummaryPDF = Object.values(projMap2).map((p:any) => ({ ...p, users: Array.from(p.users) }))
+    generatePDFReport({
+      month: mo, year: filters.year, companyName,
+      generatedAt: new Date().toLocaleString('ro-RO'),
+      userReports, projectSummary: projectSummaryPDF,
+    })
+    setExporting(false)
+  }
+
+  const totalHours = tasks.reduce((s,t)=>s+(t.hours_worked||0),0)
+  const terminated = tasks.filter(t=>t.status==='TERMINAT').length
+  const nouTerminated = tasks.filter(t=>t.tip_plan==='NOU'&&t.status==='TERMINAT').length
 
   const chartData = MONTHS_SHORT.map((name,idx) => {
     const monthStr = `${filters.year}-${String(idx+1).padStart(2,'0')}`
-    const row:any = {month:name}
-    users.forEach(u => { row[u.username] = tasks.filter(t=>t.user_id===u.id&&t.month===monthStr).reduce((s:number,t:any)=>s+(t.hours_worked||0),0) })
+    const row:any={month:name}
+    users.forEach(u=>{row[u.username]=allTasks.filter(t=>t.user_id===u.id&&t.month===monthStr).reduce((s:number,t:any)=>s+(t.hours_worked||0),0)})
     return row
   })
 
   const userSummary = users.map(u => {
     const uTasks = tasks.filter(t=>t.user_id===u.id)
     const hours = uTasks.reduce((s,t)=>s+(t.hours_worked||0),0)
-    const tipCounts:Record<string,number> = {NOU:0,C_DE:0,C_LMT:0,FREI:0,NTR:0,MKT:0}
+    const tipCounts:Record<string,number>={NOU:0,C_DE:0,C_LMT:0,FREI:0,NTR:0,MKT:0}
     uTasks.filter(t=>t.status==='TERMINAT'&&t.tip_plan).forEach(t=>{if(tipCounts[t.tip_plan]!==undefined)tipCounts[t.tip_plan]++})
     return {...u, hours, days:new Set(uTasks.map(t=>t.task_date)).size, taskCount:uTasks.length, tipCounts}
   })
+
+  // Project summary
+  const projMap: Record<string,any> = {}
+  tasks.forEach(t => {
+    const abbr = t.project?.abbreviation||'—'
+    if (!projMap[abbr]) projMap[abbr] = { abbr, name:t.project?.name||'', beneficiary:(t.project as any)?.beneficiary?.name||'', totalHours:0, users:new Set(), tipCounts:{NOU:0,C_DE:0,C_LMT:0,FREI:0,NTR:0,MKT:0} }
+    projMap[abbr].totalHours += t.hours_worked||0
+    projMap[abbr].users.add(t.profile?.full_name||'')
+    if (t.status==='TERMINAT'&&t.tip_plan&&projMap[abbr].tipCounts[t.tip_plan]!==undefined) projMap[abbr].tipCounts[t.tip_plan]++
+  })
+  const projectSummary = Object.values(projMap).map((p:any)=>({...p,users:Array.from(p.users)})).sort((a,b)=>b.totalHours-a.totalHours)
 
   function setFilter(k:string,v:string){setFilters(f=>({...f,[k]:v}))}
 
@@ -105,16 +177,15 @@ export default function AdminReportsPage() {
             <div style={{fontSize:16,fontWeight:700,letterSpacing:'-0.02em',color:'var(--text)'}}>Rapoarte centralizate</div>
             <div style={{fontSize:11,color:'var(--text2)'}}>Evidența globală a tuturor angajaților</div>
           </div>
-          <div style={{display:'flex',gap:8}}>
-            <button className={`btn ${view==='overview'?'btn-primary':'btn-ghost'}`} onClick={()=>setView('overview')}>Sumar</button>
-            <button className={`btn ${view==='tasks'?'btn-primary':'btn-ghost'}`} onClick={()=>setView('tasks')}>Toate taskurile</button>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            <button className={`btn btn-sm ${view==='overview'?'btn-primary':'btn-ghost'}`} onClick={()=>setView('overview')}>Sumar</button>
+            <button className={`btn btn-sm ${view==='tasks'?'btn-primary':'btn-ghost'}`} onClick={()=>setView('tasks')}>Taskuri</button>
             <div style={{width:1,background:'var(--border)',margin:'0 4px'}}/>
-            <button className="btn btn-success" onClick={exportSummaryExcel} disabled={exporting} title="Export sumar per angajat">
-              {exporting?'⏳':'📊'} Sumar Excel
-            </button>
-            <button className="btn btn-success" onClick={exportTasksExcel} disabled={exporting} title="Export toate taskurile">
-              {exporting?'⏳':'📋'} Taskuri Excel
-            </button>
+            <button className="btn btn-success btn-sm" onClick={exportAllExcel} disabled={exporting} title="Export TOT anul fără filtre">📋 Tot Excel</button>
+            <button className="btn btn-success btn-sm" onClick={exportFilteredExcel} disabled={exporting} title="Export cu filtrele selectate">⬇️ Filtrat Excel</button>
+            <button className="btn btn-success btn-sm" onClick={exportSummaryExcel} disabled={exporting}>📊 Sumar Excel</button>
+            <button className="btn btn-success btn-sm" onClick={exportProjectExcel} disabled={exporting}>📁 Proiecte Excel</button>
+            <button className="btn btn-danger btn-sm" onClick={exportPDF} disabled={exporting}>📄 PDF Raport</button>
           </div>
         </div>
         <div className="page-content">
@@ -141,8 +212,8 @@ export default function AdminReportsPage() {
                 <option value="">Toate tipurile</option>
                 {['NOU','C_DE','C_LMT','FREI','NTR','MKT'].map(t=><option key={t} value={t}>{t}</option>)}
               </select>
-              {(filters.month||filters.userId||filters.projectId||filters.tipPlan||filters.status)&&(
-                <button className="btn btn-ghost btn-sm" onClick={()=>setFilters(f=>({...f,month:'',userId:'',projectId:'',status:'',tipPlan:''}))}>✕ Reset</button>
+              {(filters.userId||filters.projectId||filters.tipPlan||filters.status)&&(
+                <button className="btn btn-ghost btn-sm" onClick={()=>setFilters(f=>({...f,userId:'',projectId:'',status:'',tipPlan:''}))}>✕ Reset</button>
               )}
             </div>
           </div>
@@ -158,10 +229,11 @@ export default function AdminReportsPage() {
                 ))}
               </div>
 
+              {/* User summary */}
               <div className="card" style={{marginBottom:16}}>
                 <div className="card-head">
                   <div className="card-title">Sumar per angajat</div>
-                  <button className="btn btn-success btn-sm" onClick={exportSummaryExcel} disabled={exporting}>📊 Export Excel</button>
+                  <button className="btn btn-success btn-sm" onClick={exportSummaryExcel} disabled={exporting}>📊 Excel</button>
                 </div>
                 <div style={{overflowX:'auto'}}>
                   <table>
@@ -169,7 +241,7 @@ export default function AdminReportsPage() {
                     <tbody>
                       {userSummary.map(u=>(
                         <tr key={u.id}>
-                          <td><div style={{fontWeight:700,color:'var(--text)'}}>{u.full_name}</div><div style={{fontSize:10,color:'var(--text3)',fontFamily:'var(--mono)'}}>@{u.username}</div></td>
+                          <td><div style={{fontWeight:700,color:'var(--text)'}}>{u.full_name}</div></td>
                           <td style={{fontFamily:'var(--mono)',fontWeight:700,color:'var(--acc)'}}>{u.hours.toFixed(1)}h</td>
                           <td style={{fontFamily:'var(--mono)'}}>{u.days}</td>
                           {['NOU','C_DE','C_LMT','FREI','NTR','MKT'].map(k=>(
@@ -190,9 +262,36 @@ export default function AdminReportsPage() {
                 </div>
               </div>
 
-              {!filters.month && !filters.userId && (
+              {/* Project summary */}
+              <div className="card" style={{marginBottom:16}}>
+                <div className="card-head">
+                  <div className="card-title">Ore pe proiect</div>
+                  <button className="btn btn-success btn-sm" onClick={exportProjectExcel} disabled={exporting}>📁 Excel</button>
+                </div>
+                <div style={{overflowX:'auto'}}>
+                  <table>
+                    <thead><tr><th>Proiect</th><th>Beneficiar</th><th>Angajați</th><th>Total ore</th><th>NOU✓</th><th>C_DE✓</th><th>C_LMT✓</th></tr></thead>
+                    <tbody>
+                      {projectSummary.map((p:any)=>(
+                        <tr key={p.abbr}>
+                          <td><div style={{fontWeight:700,color:'var(--text)'}}>{p.abbr}</div><div style={{fontSize:10,color:'var(--text3)'}}>{p.name}</div></td>
+                          <td style={{fontSize:11,color:'var(--text2)'}}>{p.beneficiary||'—'}</td>
+                          <td style={{fontSize:11,color:'var(--text2)'}}>{[...p.users].join(', ')}</td>
+                          <td style={{fontFamily:'var(--mono)',fontWeight:700,color:'var(--acc)'}}>{p.totalHours.toFixed(1)}h</td>
+                          <td><span className="badge badge-nou">{p.tipCounts['NOU']||0}</span></td>
+                          <td><span className="badge badge-cde">{p.tipCounts['C_DE']||0}</span></td>
+                          <td><span className="badge badge-clmt">{p.tipCounts['C_LMT']||0}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Chart */}
+              {!filters.userId && (
                 <div className="card" style={{padding:24}}>
-                  <h2 style={{fontSize:13,fontWeight:700,marginBottom:16,color:'var(--text2)',textTransform:'uppercase',letterSpacing:'.06em'}}>Ore pe angajat / lună — {filters.year}</h2>
+                  <h2 style={{fontSize:13,fontWeight:700,marginBottom:16,color:'var(--text2)',textTransform:'uppercase',letterSpacing:'.06em'}}>Ore per angajat / lună — {filters.year}</h2>
                   <ResponsiveContainer width="100%" height={240}>
                     <BarChart data={chartData} barSize={10}>
                       <XAxis dataKey="month" tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false}/>
@@ -209,14 +308,15 @@ export default function AdminReportsPage() {
             <div className="card">
               <div className="card-head">
                 <div><div className="card-title">{tasks.length} taskuri</div></div>
-                <button className="btn btn-success btn-sm" onClick={exportTasksExcel} disabled={exporting}>📋 Export Excel</button>
+                <div style={{display:'flex',gap:6}}>
+                  <button className="btn btn-success btn-sm" onClick={exportAllExcel} disabled={exporting}>📋 Tot Excel</button>
+                  <button className="btn btn-success btn-sm" onClick={exportFilteredExcel} disabled={exporting}>⬇️ Filtrat Excel</button>
+                </div>
               </div>
-              {loading ? (
-                <div style={{padding:60,textAlign:'center',color:'var(--text3)'}}>Se încarcă...</div>
-              ) : (
+              {loading ? <div style={{padding:60,textAlign:'center',color:'var(--text3)'}}>Se încarcă...</div> : (
                 <div style={{overflowX:'auto'}}>
                   <table>
-                    <thead><tr><th>Data</th><th>Angajat</th><th>Proiect</th><th>Bauteil</th><th>SCH/BEW</th><th>Nr. Plan</th><th>Etaj</th><th>Descriere</th><th>Status</th><th>Tip</th><th>Ore</th></tr></thead>
+                    <thead><tr><th>Data</th><th>Angajat</th><th>Proiect</th><th>Bauteil</th><th>Nr. Plan</th><th>Descriere</th><th>Status</th><th>Tip</th><th>Ore</th></tr></thead>
                     <tbody>
                       {tasks.slice(0,300).map(t=>(
                         <tr key={t.id}>
@@ -224,16 +324,14 @@ export default function AdminReportsPage() {
                           <td style={{fontSize:11,color:'var(--text)'}}>{t.profile?.full_name}</td>
                           <td><div style={{fontWeight:600,fontSize:11,color:'var(--text)'}}>{t.project?.abbreviation||'—'}</div></td>
                           <td style={{fontSize:11,color:'var(--text2)'}}>{t.bauteil?.name||'—'}</td>
-                          <td style={{fontSize:11}}>{t.sch_bew_gen||'—'}</td>
                           <td style={{fontFamily:'var(--mono)',fontSize:11}}>{t.plan_number||'—'}</td>
-                          <td style={{fontSize:11}}>{t.floor||'—'}</td>
                           <td style={{maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:11,color:'var(--text)'}}>{t.plan_description||'—'}</td>
                           <td><span className={`badge ${STATUS_BADGE[t.status]}`}>{STATUS_LABEL[t.status]}</span></td>
                           <td>{t.tip_plan&&<span className={`badge ${TIP_BADGE[t.tip_plan]||'badge-gray'}`}>{t.tip_plan}</span>}</td>
                           <td style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--acc)'}}>{t.hours_worked?`${Number(t.hours_worked).toFixed(2)}h`:'—'}</td>
                         </tr>
                       ))}
-                      {tasks.length>300&&<tr><td colSpan={11} style={{textAlign:'center',padding:16,color:'var(--text3)',fontSize:11}}>Afișate primele 300. Exportă Excel pentru toate.</td></tr>}
+                      {tasks.length>300&&<tr><td colSpan={9} style={{textAlign:'center',padding:16,color:'var(--text3)',fontSize:11}}>Afișate 300. Exportă Excel pentru toate.</td></tr>}
                     </tbody>
                   </table>
                 </div>
