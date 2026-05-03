@@ -1,5 +1,4 @@
-// Export Excel utility using SheetJS (already in Next.js deps)
-// Usage: exportExcel(rows, columns, filename)
+// Export Excel utility - uses CSV with BOM and tab separator for perfect Excel compatibility
 
 export type ExcelColumn = {
   key: string
@@ -13,51 +12,30 @@ export async function exportExcel(
   columns: ExcelColumn[],
   filename: string
 ) {
-  // Dynamic import SheetJS
-  const XLSX = await import('xlsx')
+  const SEP = '\t' // Tab separator — Excel deschide perfect fără probleme cu virgule în date
 
-  // Build header row
-  const header = columns.map(c => c.label)
+  const header = columns.map(c => c.label).join(SEP)
 
-  // Build data rows
   const rows = data.map(row =>
     columns.map(col => {
       const val = row[col.key]
       if (val === null || val === undefined) return ''
-      if (col.format === 'hours' && typeof val === 'number') return parseFloat(val.toFixed(2))
-      if (col.format === 'number') return typeof val === 'number' ? val : parseFloat(val) || 0
-      return String(val)
-    })
+      if (col.format === 'hours' && typeof val === 'number') return Number(val).toFixed(2).replace('.', ',')
+      if (col.format === 'number') return typeof val === 'number' ? String(val) : String(parseFloat(val) || 0)
+      return String(val).replace(/\t/g, ' ').replace(/\n/g, ' ')
+    }).join(SEP)
   )
 
-  // Create worksheet
-  const wsData = [header, ...rows]
-  const ws = XLSX.utils.aoa_to_sheet(wsData)
-
-  // Set column widths
-  ws['!cols'] = columns.map(c => ({ wch: c.width || 15 }))
-
-  // Style header row (bold)
-  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
-  for (let C = range.s.c; C <= range.e.c; C++) {
-    const cell = XLSX.utils.encode_cell({ r: 0, c: C })
-    if (!ws[cell]) continue
-    ws[cell].s = {
-      font: { bold: true, color: { rgb: 'FFFFFF' } },
-      fill: { fgColor: { rgb: '3B82F6' } },
-      alignment: { horizontal: 'center' }
-    }
-  }
-
-  // Create workbook
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, 'Date')
-
-  // Download
-  XLSX.writeFile(wb, `${filename}.xlsx`)
+  const csv = [header, ...rows].join('\n')
+  // BOM pentru UTF-8 — Excel îl recunoaște automat
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/tab-separated-values;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${filename}.xls` // .xls ca să se deschidă direct în Excel
+  a.click()
+  URL.revokeObjectURL(url)
 }
-
-// ── PRESET EXPORTS ──────────────────────────────────────────────────────────
 
 export const TASKS_COLUMNS: ExcelColumn[] = [
   { key: 'task_date', label: 'Data', width: 12 },
@@ -71,13 +49,13 @@ export const TASKS_COLUMNS: ExcelColumn[] = [
   { key: 'plan_description', label: 'Descriere Plan', width: 30 },
   { key: 'status', label: 'Status', width: 12 },
   { key: 'tip_plan', label: 'Tip Plan', width: 10 },
-  { key: 'time_start', label: 'Început', width: 9 },
-  { key: 'time_pause', label: 'Pauză', width: 9 },
+  { key: 'time_start', label: 'Inceput', width: 9 },
+  { key: 'time_pause', label: 'Pauza', width: 9 },
   { key: 'time_end', label: 'Terminat', width: 9 },
   { key: 'hours_worked', label: 'Ore', width: 8, format: 'hours' },
-  { key: 'correction_date', label: 'Data Corecție', width: 14 },
+  { key: 'correction_date', label: 'Data Corectie', width: 14 },
   { key: 'verified', label: 'Verificat', width: 10 },
-  { key: 'notes', label: 'Observații', width: 25 },
+  { key: 'notes', label: 'Observatii', width: 25 },
 ]
 
 export const SUMMARY_COLUMNS: ExcelColumn[] = [
@@ -85,16 +63,15 @@ export const SUMMARY_COLUMNS: ExcelColumn[] = [
   { key: 'username', label: 'Username', width: 15 },
   { key: 'hours', label: 'Ore totale', width: 12, format: 'hours' },
   { key: 'days', label: 'Zile lucrate', width: 14, format: 'number' },
-  { key: 'NOU', label: 'NOU ✓', width: 10, format: 'number' },
-  { key: 'C_DE', label: 'C_DE ✓', width: 10, format: 'number' },
-  { key: 'C_LMT', label: 'C_LMT ✓', width: 10, format: 'number' },
-  { key: 'FREI', label: 'FREI ✓', width: 10, format: 'number' },
-  { key: 'NTR', label: 'NTR ✓', width: 10, format: 'number' },
-  { key: 'MKT', label: 'MKT ✓', width: 10, format: 'number' },
+  { key: 'NOU', label: 'NOU', width: 10, format: 'number' },
+  { key: 'C_DE', label: 'C_DE', width: 10, format: 'number' },
+  { key: 'C_LMT', label: 'C_LMT', width: 10, format: 'number' },
+  { key: 'FREI', label: 'FREI', width: 10, format: 'number' },
+  { key: 'NTR', label: 'NTR', width: 10, format: 'number' },
+  { key: 'MKT', label: 'MKT', width: 10, format: 'number' },
   { key: 'terminated', label: 'Total terminate', width: 16, format: 'number' },
 ]
 
-// Flatten task for export
 export function flattenTask(t: any): Record<string, any> {
   return {
     task_date: t.task_date || '',
@@ -106,7 +83,7 @@ export function flattenTask(t: any): Record<string, any> {
     plan_number: t.plan_number || '',
     floor: t.floor || '',
     plan_description: t.plan_description || '',
-    status: { IN_LUCRU:'In lucru', PAUZA:'Pauza', TERMINAT:'Terminat' }[t.status as string] || t.status || '',
+    status: ({ IN_LUCRU:'In lucru', PAUZA:'Pauza', TERMINAT:'Terminat' } as any)[t.status] || t.status || '',
     tip_plan: t.tip_plan || '',
     time_start: t.time_start?.slice(0,5) || '',
     time_pause: t.time_pause?.slice(0,5) || '',
