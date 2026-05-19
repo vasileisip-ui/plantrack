@@ -9,6 +9,9 @@ const LIST_NAMES = [
   { key:'tip_plan', label:'Tipuri plan' },
   { key:'sch_bew_gen', label:'SCH / BEW / GEN.' },
   { key:'status', label:'Statusuri' },
+  { key:'desc_sch', label:'Descrieri SCH' },
+  { key:'desc_bew', label:'Descrieri BEW' },
+  { key:'desc_gen', label:'Descrieri GEN.' },
 ]
 
 export default function AdminSettingsPage() {

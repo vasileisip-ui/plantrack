@@ -19,8 +19,8 @@ export default function BeneficiariesPage() {
   useEffect(() => { fetchItems() }, [])
 
   async function fetchItems() {
-    const { data } = await supabase.from('beneficiaries').select('*').order('name')
-    setItems(data || [])
+    const { data } = await supabase.from('beneficiaries').select('*, projects:projects(id)').order('name')
+    setItems((data||[]).map((b: any) => ({ ...b, project_count: b.projects?.length || 0 })))
     setLoading(false)
   }
 
@@ -85,7 +85,7 @@ export default function BeneficiariesPage() {
                   {filtered.map(b => (
                     <tr key={b.id}>
                       <td style={{ fontWeight:600, color:'var(--text)' }}>{b.name}</td>
-                      <td style={{ fontSize:11, color:'var(--text3)' }}>—</td>
+                      <td style={{ fontSize:11, color:'var(--text2)', fontWeight:600 }}>{(b as any).project_count || 0}</td>
                       <td style={{ fontSize:11, color:'var(--text3)' }}>{new Date(b.created_at).toLocaleDateString('ro-RO')}</td>
                       <td>
                         <div style={{ display:'flex', gap:6 }}>

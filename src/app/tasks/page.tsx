@@ -33,6 +33,7 @@ export default function TasksPage() {
   const [viewMode, setViewMode] = useState<'day'|'month'>('day')
   const [projects, setProjects] = useState<any[]>([])
   const [bauteile, setBauteile] = useState<any[]>([])
+  const [descLists, setDescLists] = useState<Record<string, string[]>>({ desc_sch:[], desc_bew:[], desc_gen:[] })
   // inline editing
   const [editingCell, setEditingCell] = useState<string|null>(null) // "dateStr-taskNum"
   const [pendingSave, setPendingSave] = useState<Record<string, any>>({})
@@ -49,6 +50,13 @@ export default function TasksPage() {
       .then(({ data }) => setProjects((data?.map((r: any) => r.project) || []).filter(Boolean)))
     supabase.from('holidays').select('holiday_date').eq('year', year)
       .then(({ data }) => setHolidays(new Set((data || []).map((h: any) => h.holiday_date))))
+    // Fetch description lists
+    supabase.from('list_items').select('list_name,value,order_index').in('list_name',['desc_sch','desc_bew','desc_gen']).eq('active',true).order('order_index')
+      .then(({ data }) => {
+        const lists: Record<string,string[]> = { desc_sch:[], desc_bew:[], desc_gen:[] }
+        ;(data||[]).forEach((item: any) => { lists[item.list_name]?.push(item.value) })
+        setDescLists(lists)
+      })
   }, [profile, year])
 
   const fetchTasks = useCallback(async () => {
@@ -97,7 +105,7 @@ export default function TasksPage() {
   }, [viewMode, today])
 
   async function saveCell(dateStr: string, taskNum: number, data: any, existingId?: string) {
-    if (!profile) return
+    if (!profile) { alert('Eroare: utilizatorul nu este autentificat!'); return }
     const hours = calcHours(data.time_start, data.time_pause, data.time_end)
     const payload = {
       user_id: profile.id, task_date: dateStr, task_number: taskNum,
@@ -110,8 +118,15 @@ export default function TasksPage() {
       correction_date: data.correction_date || null,
       verified: data.verified || false, notes: data.notes || null,
     }
-    if (existingId) await supabase.from('tasks').update(payload).eq('id', existingId)
-    else await supabase.from('tasks').insert(payload)
+    let error: any = null
+    if (existingId) {
+      const res = await supabase.from('tasks').update(payload).eq('id', existingId)
+      error = res.error
+    } else {
+      const res = await supabase.from('tasks').insert(payload)
+      error = res.error
+    }
+    if (error) { alert('Eroare la salvare: ' + error.message); return }
     fetchTasks()
   }
 
@@ -238,6 +253,7 @@ export default function TasksPage() {
                               onSave={saveCell}
                               fetchTasks={fetchTasks}
                               profile={profile}
+                              descLists={descLists}
                             />
                           </td>
 
@@ -297,7 +313,7 @@ export default function TasksPage() {
 }
 
 // ── INLINE PROJECT CELL COMPONENT ──
-function ProjectCell({ projects, value, task, dateStr, taskNum, onSave, fetchTasks, profile }: any) {
+function ProjectCell({ projects, value, task, dateStr, taskNum, onSave, fetchTasks, profile, descLists }: any) {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<any>(null)
   const [bauteile, setBauteile] = useState<any[]>([])
@@ -374,7 +390,7 @@ function ProjectCell({ projects, value, task, dateStr, taskNum, onSave, fetchTas
       </div>
 
       {open && (
-        <div className="modal-overlay" onClick={() => setOpen(false)}>
+        <div className="modal-overlay">
           <div className="modal modal-xl" onClick={e => e.stopPropagation()}>
             <div className="modal-title">
               <span>{task ? 'Editează plan' : 'Plan nou'} — <span style={{ fontFamily:'var(--mono)', color:'var(--acc)', fontSize:13 }}>{dateStr} / #{taskNum}</span></span>
@@ -436,7 +452,28 @@ function ProjectCell({ projects, value, task, dateStr, taskNum, onSave, fetchTas
                   </div>
                   <div className="form-group" style={{ gridColumn:'1/-1' }}>
                     <label className="label">Descriere Plan</label>
-                    <input className="input" value={form.plan_description} onChange={e => setF('plan_description', e.target.value)} placeholder="ex: Grundriss Erdgeschoss" />
+                    {(() => {
+                      const listKey = form.sch_bew_gen === 'SCH' ? 'desc_sch' : form.sch_bew_gen === 'BEW' ? 'desc_bew' : form.sch_bew_gen === 'GENERALITATI' ? 'desc_gen' : null
+                      const opts = listKey ? (descLists?.[listKey] || []) : []
+                      return opts.length > 0 ? (
+                        <div style={{ display:'flex', gap:6 }}>
+                          <select className="select" style={{ flex:1 }}
+                            value={opts.includes(form.plan_description) ? form.plan_description : '__custom__'}
+                            onChange={e => { if (e.target.value !== '__custom__') setF('plan_description', e.target.value) }}>
+                            <option value="">— alege descriere —</option>
+                            {opts.map((o: string) => <option key={o} value={o}>{o}</option>)}
+                            <option value="__custom__">✏️ Altă descriere...</option>
+                          </select>
+                          {(!opts.includes(form.plan_description) || form.plan_description === '') && (
+                            <input className="input" style={{ flex:1 }} value={form.plan_description}
+                              onChange={e => setF('plan_description', e.target.value)}
+                              placeholder="sau scrie manual..." />
+                          )}
+                        </div>
+                      ) : (
+                        <input className="input" value={form.plan_description} onChange={e => setF('plan_description', e.target.value)} placeholder="ex: Grundriss Erdgeschoss" />
+                      )
+                    })()}
                   </div>
                 </div>
 

@@ -86,6 +86,18 @@ export default function AdminProjectsPage() {
     await supabase.from('projects').update({ active: !p.active }).eq('id', p.id); fetchAll()
   }
 
+  async function deleteProject(p: ProjectFull) {
+    // Check if has tasks
+    const { count } = await supabase.from('tasks').select('id', { count: 'exact', head: true }).eq('project_id', p.id)
+    if (count && count > 0) {
+      if (!confirm(`Proiectul "${p.name}" are ${count} taskuri asociate. Ești sigur că vrei să îl ștergi? Taskurile vor rămâne dar fără proiect asociat.`)) return
+    } else {
+      if (!confirm(`Ștergi definitiv proiectul "${p.name}"? Această acțiune nu poate fi anulată!`)) return
+    }
+    await supabase.from('projects').delete().eq('id', p.id)
+    fetchAll()
+  }
+
   function openNewProject() {
     setProjForm({ name:'', abbreviation:'', beneficiary_id:'', description:'' })
     setNewBauteile([]); setNewBauteilInput(''); setError(''); setModal('project')
@@ -192,6 +204,7 @@ export default function AdminProjectsPage() {
                     <button className={`btn btn-sm ${p.active ? 'btn-danger' : 'btn-success'}`} onClick={() => toggleActive(p)}>
                       {p.active ? 'Dezactivează' : 'Activează'}
                     </button>
+                    <button className="btn btn-danger btn-sm" onClick={() => deleteProject(p)} title="Șterge definitiv proiectul">🗑</button>
                   </div>
                 </div>
                 {expanded.has(p.id) && (
